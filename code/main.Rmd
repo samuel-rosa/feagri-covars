@@ -8,10 +8,180 @@ lang: pt
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, fig.asp = 1)
+knitr::opts_chunk$set(echo = TRUE)
+library(magrittr)
+library(sf)
+library(raster)
+
+mapviewRaster <-
+  function (x, ...) {
+    mapview::mapview(x, alpha.regions = 0.6, map.types = "Esri.WorldImagery", ...)
+  }
+```
+
+# Material and Methods
+
+# Study area
+
+```{r}
+study_area <- sf::read_sf("../data/vector/contornoFazenda.shp")
+study_area$id <- 1
+mapview::mapview(study_area, map.types = "Esri.WorldImagery")
+```
+
+
+## Soil data
+
+```{r, message=FALSE, warning=FALSE}
+# Download data
+locale <- readr::locale(decimal_mark = ",")
+camada <- 
+  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  googlesheets::gs_key() %>% 
+  googlesheets::gs_read_csv(ws = "camada", locale = locale, comment = "#metadado>", verbose = FALSE)
+observacao <-
+  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  googlesheets::gs_key() %>% 
+  googlesheets::gs_read_csv(ws = "observacao", locale = locale, comment = "#metadado>", verbose = FALSE)
+soil_data <- 
+  merge(observacao, camada, by = "observacao_id") %>% 
+  sf::st_as_sf(coords = c("coord_x", "coord_y"), crs = 32722) %T>% 
+  print()
 ```
 
 ```{r}
+study_area %>% 
+  mapview::mapview(map.types = "Esri.WorldImagery", color = "red", alpha.regions = 0.01, legend = FALSE) +
+  mapview::mapview(soil_data["observacao_id"], layer.name = "samples")
+```
 
+## Covariates
+
+First try to load all rasters and stack them.
+They have different number of rows and/or columns due to different resolution. Thus, it is not gonna work.
+So we, first have process them.
+
+```{r}
+covars <- 
+  c("ndvi_2013_04_22.tif", "ndvi_2016_01_25.tif", "ndvi_2018_04_20.tif", "dem.tif", "ec.tif") %>% 
+  paste("../data/raster/", ., sep = "")
+covar_data <- raster::stack(covars)
+```
+
+Verify resolution of all raster. The DEM has a different resolution. So, we have to process it.
+
+```{r}
+sapply(covars, function (x) raster::raster(x) %>% c(res(.), dim(.)))
+```
+
+Because the DEM is the largest raster, we resample the other rasters to match the DEM resolution and dimension.
+But first we set its resolution to 30 m x 30 m.
+
+```{r}
+sf::gdal_utils(
+  "warp", source = covars[4], destination = "../data/raster/dem_30m.tif", processing = "-tr 30 30 -r cubic")
+covars[4] <- "../data/raster/dem_30m.tif"
+covar_data <- raster::raster(covars[4])
+covar_data <-
+  raster::stack(covars[-4]) %>% 
+  raster::resample(y = covar_data) %>% 
+  raster::stack(covar_data) %T>% 
+  print()
+```
+
+See the spatial distribution of the data.
+
+```{r}
+mapviewRaster(covar_data) +
+  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
+```
+
+### Terrain attibutes
+
+Compute some usefull terrain attibutes using RSAGA. Note the SAGA grid format (SDAT and SGRD).
+
+```{r}
+env <- RSAGA::rsaga.env()
+RSAGA::rsaga.slope.asp.curv(
+  in.dem = "../data/raster/dem_30m.tif",
+  out.slope = "../data/raster/slope.sgrd",
+  out.cgene = "../data/raster/general_curvature.sgrd",
+  out.cplan = "../data/raster/plan_curvature.sgrd",
+  out.cprof = "../data/raster/profile_curvature.sgrd",
+  unit.slope = "percent")
+RSAGA::rsaga.wetness.index(
+  in.dem = "../data/raster/dem_30m.tif",
+  out.wetness.index = "../data/raster/twi.sgrd", 
+  out.carea = "../data/raster/catch_area.sgrd", 
+  out.cslope = "../data/raster/catch_slope.sgrd", 
+  area.type = "absolute")
+```
+
+```{r}
+covar_data <-
+  raster::stack(
+    c("../data/raster/slope.sdat",
+    "../data/raster/general_curvature.sdat",
+    "../data/raster/plan_curvature.sdat", 
+    "../data/raster/profile_curvature.sdat",
+    "../data/raster/twi.sdat", 
+    "../data/raster/catch_area.sdat",
+    "../data/raster/catch_slope.sdat")) %>% 
+  raster::stack(covar_data)
+covar_data[["catch_area"]] <- log(covar_data[["catch_area"]])
+covar_data
+```
+
+```{r}
+mapviewRaster(covar_data[[1:7]]) +
+  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
+```
+
+The correlation between covariates.
+
+```{r}
+covar_data[] %>% 
+  cor(use = "complete") %>% 
+  round(2) %>% 
+  pedometrics::plotCor()
+```
+
+### Other covariares
+
+```{r}
+fields <- 
+  sf::read_sf("../data/vector/PIQUETES_CAIUA.shp") %>% 
+  sf::st_transform(crs = 32722)
+fields$id <- 1:nrow(fields)
+mapview::mapview(fields, map.types = "Esri.WorldImagery", legend = FALSE) +
+  mapview::mapview(soil_data["observacao_id"], legend = FALSE) +
+  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
+```
+
+## Modelling
+
+Sample covariates at the location of sampling points.
+
+```{r}
+soil_data %<>% cbind(., raster::extract(covar_data, .))
+soil_data$fields <- raster::extract(sf::as_Spatial(fields), sf::as_Spatial(soil_data))[, "id"]
+```
+
+```{r}
+f <- log1p(fosforo_resina) ~ slope + general_curvature + plan_curvature + profile_curvature + twi + catch_area + catch_slope + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ec + dem_30m + camada_id
+fit_rf <- 
+  soil_data %>% 
+  caret::train(
+    f, method = "ranger", data = ., na.action = na.omit, trControl = caret::trainControl(method = "LOOCV"), 
+    tuneGrid = data.frame(mtry = 4, splitrule = "variance", min.node.size = 5)) %T>% 
+  print()
+```
+
+```{r}
+covar_data$camada_id <- 1
+soil_data$fosforo_resina_log <- log1p(soil_data$fosforo_resina)
+predictions <- raster::predict(covar_data, fit_rf)
+mapviewRaster(predictions) + 
+  mapview::mapview(soil_data[soil_data$camada_id == 1, "fosforo_resina_log"], legend = FALSE)
 ```
 
