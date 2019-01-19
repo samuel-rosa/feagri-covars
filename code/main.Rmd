@@ -24,7 +24,7 @@ mapviewRaster <-
 # Study area
 
 ```{r}
-study_area <- sf::read_sf("../data/vector/contornoFazenda.shp")
+study_area <- sf::read_sf("../data/vector/farm.shp")
 study_area$id <- 1
 mapview::mapview(study_area, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery")
 ```
@@ -220,7 +220,7 @@ covar_data[] %>%
 
 ```{r}
 fields <- 
-  sf::read_sf("../data/vector/PIQUETES_CAIUA.shp") %>% 
+  sf::read_sf("../data/vector/fields.shp") %>% 
   sf::st_transform(crs = 32722)
 fields$id <- 1:nrow(fields)
 mapview::mapview(fields, map.types = "Esri.WorldImagery", legend = FALSE) +
