@@ -5,3 +5,5 @@ plan_curvature.*
 general_curvature.*
 hillshade.*
 flow_path_length.*
+catchment_area.*
+catchment_slope.*
