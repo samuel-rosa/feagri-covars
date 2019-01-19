@@ -10,24 +10,75 @@ lang: pt
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(magrittr)
+library(dplyr)
 library(sf)
 library(raster)
-
-mapviewRaster <-
-  function (x, ...) {
-    mapview::mapview(x, alpha.regions = 0.6, map.types = "Esri.WorldImagery", ...)
-  }
+library(mapview)
 ```
 
-# Material and Methods
+Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
+produção de bovinos e corte no município de Caiuá, no oeste do estado de São Paulo. Dentre as propriedades do 
+solo estão: conteúdo de fósforo e bases trocáveis, capacidade de troca de cátions e saturação por bases, 
+conteúdo de micronutrientes, pH e acidez potencial, conteúdo de carbono orgânico, e distribuição do tamanho de
+partículas.
 
-# Study area
+# Material e Métodos
+
+## Área de estudo
+
+O primeiro passo consiste em fazer um levantamento das informações disponíveis sobre a área de estudo. Essas 
+informações incluem dados espacialmente exaustivos, como imagens de satélite e índices de vegetação, modelos
+digitais de elevação e atributos de terreno, mapas pedológicos e geológicos, entre outros. Também incluem 
+informações históricas sobre o uso da terra e as práticas de manejo e conservação do solo.
+
+Vamos iniciar visualizando a área de estudo sobre uma imagem de satélite da coleção pública da ESRI. Para isso,
+carregamos o arquivo vetorial contendo o limite da área de estudo, `"../data/vector/farm.shp"`, usando a função 
+`sf::read_sf`. Em seguida, criamos uma figura responsiva usando a função `mapview::mapview`.
 
 ```{r}
-study_area <- sf::read_sf("../data/vector/farm.shp")
-study_area$id <- 1
-mapview::mapview(study_area, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery")
+study_area <- read_sf("../data/vector/farm.shp")
+mapview(study_area, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
 ```
+
+### Relevo
+
+A imagem acima mostra que a área de estudo é cortada por inúmeros terraços, estruturas construídas para reduzir
+a energia cinética da água da chuva escoando na superfície do solo e, assim, reduzir a erosão do solo. Também
+observamos algumas escavações para coleta da enxurrada em pontos de convergência do terreno. Isso significa que
+o relevo pode exercer um controle importante da distribuição espacial das propriedades do solo.
+
+Vamos analisar mais de perto o relevo da área de estudo utilizando o modelo digital de elevação (MDE). Para 
+isso, primeiro calculamos o sombreamento do relevo usando `sf::gdal_utils`. Em seguida, carregamos os dois
+arquivos, `"../data/raster/elevation.tif"` e `"../data/raster/hillshade.tif"`, usando `raster::stack`, para 
+então gerar uma imagem com as duas camadas são sobrepostas, dando a impressão visual da forma do terreno (3d).
+Para auxiliar, adicionamos curvas de nível geradas com a função `raster::rasterToContour`. Na imagem, as partes
+mais baixas do terreno são mostradas em azul.
+
+__Exercício 1__ A imagem abaixo mostra a configuração do terreno na área de estudo. Você espera que o terreno
+esteja relacionado à distribuição espacial das propriedades do solo que se pretende mapear? De que maneira se 
+daria essa relação? Quais atributos de terreno podem ser úteis para descrever o efeito do terreno sobre a
+distribuição espacial das propriedades do solo?
+
+```{r}
+gdal_utils(
+  util = "demprocessing", source = "../data/raster/elevation.tif", destination = "../data/raster/hillshade.tif",
+  processing = "hillshade")
+dem <- stack("../data/raster/elevation.tif", "../data/raster/hillshade.tif")
+contour_lines <- dem[["elevation"]] %>% rasterToContour() %>% st_as_sf()
+plot(dem[["hillshade"]], col = grey(0:100/100), legend = FALSE)
+plot(dem[["elevation"]], col = topo.colors(24, alpha = 0.50), add = TRUE)
+plot(contour_lines, add = TRUE, col = "black")
+```
+
+
+
+
+
+__Exercício 2__ A análise da imagem de satélite permite identificar uma série de feições espaciais na área de
+estudo. Quais dessas feições você espera que estejam relacionadas aos valores -- a serem observados -- das
+propriedades do solo que se pretende mapear e, assim, estar determinando a sua distribuição espacial? Faça uma 
+lista com, no mínimo, 10 itens.
+
 
 ## Soil data
 
@@ -55,38 +106,6 @@ study_area %>%
 ```
 
 ## Covariates
-
-First try to load all rasters and stack them.
-They have different number of rows and/or columns due to different resolution. Thus, it is not gonna work.
-So we, first have process them.
-
-```{r}
-covars <- 
-  c("ndvi_2013_04_22.tif", "ndvi_2016_01_25.tif", "ndvi_2018_04_20.tif", "dem.tif", "ec.tif") %>% 
-  paste("../data/raster/", ., sep = "")
-covar_data <- raster::stack(covars)
-```
-
-Verify resolution of all raster. The DEM has a different resolution. So, we have to process it.
-
-```{r}
-sapply(covars, function (x) raster::raster(x) %>% c(res(.), dim(.)))
-```
-
-Because the DEM is the largest raster, we resample the other rasters to match the DEM resolution and dimension.
-But first we set its resolution to 30 m x 30 m.
-
-```{r}
-sf::gdal_utils(
-  "warp", source = covars[4], destination = "../data/raster/dem_30m.tif", processing = "-tr 30 30 -r cubic")
-covars[4] <- "../data/raster/dem_30m.tif"
-covar_data <- raster::raster(covars[4])
-covar_data <-
-  raster::stack(covars[-4]) %>% 
-  raster::resample(y = covar_data) %>% 
-  raster::stack(covar_data) %T>% 
-  print()
-```
 
 See the spatial distribution of the data.
 
