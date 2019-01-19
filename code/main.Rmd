@@ -14,6 +14,7 @@ library(dplyr)
 library(sf)
 library(raster)
 library(mapview)
+library(RSAGA)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -36,8 +37,8 @@ carregamos o arquivo vetorial contendo o limite da área de estudo, `"../data/ve
 `sf::read_sf`. Em seguida, criamos uma figura responsiva usando a função `mapview::mapview`.
 
 ```{r}
-study_area <- read_sf("../data/vector/farm.shp")
-mapview(study_area, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
+farm <- read_sf("../data/vector/farm.shp")
+mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
 ```
 
 ### Relevo
@@ -54,11 +55,6 @@ então gerar uma imagem com as duas camadas são sobrepostas, dando a impressão
 Para auxiliar, adicionamos curvas de nível geradas com a função `raster::rasterToContour`. Na imagem, as partes
 mais baixas do terreno são mostradas em azul.
 
-__Exercício 1__ A imagem abaixo mostra a configuração do terreno na área de estudo. Você espera que o terreno
-esteja relacionado à distribuição espacial das propriedades do solo que se pretende mapear? De que maneira se 
-daria essa relação? Quais atributos de terreno podem ser úteis para descrever o efeito do terreno sobre a
-distribuição espacial das propriedades do solo?
-
 ```{r}
 gdal_utils(
   util = "demprocessing", source = "../data/raster/elevation.tif", destination = "../data/raster/hillshade.tif",
@@ -70,15 +66,94 @@ plot(dem[["elevation"]], col = topo.colors(24, alpha = 0.50), add = TRUE)
 plot(contour_lines, add = TRUE, col = "black")
 ```
 
+__Exercício 1__ A imagem acima mostra a configuração do terreno na área de estudo. Você espera que o terreno
+esteja relacionado à distribuição espacial das propriedades do solo que se pretende mapear? De que maneira se 
+daria essa relação? Quais atributos de terreno podem ser úteis para descrever o efeito do terreno sobre a
+distribuição espacial das propriedades do solo? Faça uma lista com, no mínimo, cinco atributos de terreno.
 
+1. ...
+2. ...
+3. ...
+4. ...
+5. ...
 
+Atributos de terreno podem ser computados usando o SAGA GIS. Por exemplo, `RSAGA::rsaga.slope.asp.curv` calcula
+alguns atributos locais do terreno, como a declividade e a curvatura do terreno. Alguns atributos regionais do
+terreno, como a área de captação e o índice de umidade topográfica, podem ser calculados usando 
+`RSAGA::rsaga.wetness.index`. Note que o formato de arquivo matricial do SAGA GIS é SGRD -- para escrita -- e
+SDAT -- para leitura.
 
+```{r}
+rsaga.slope.asp.curv(
+  in.dem = "../data/raster/elevation.tif",
+  out.slope = "../data/raster/slope.sgrd",
+  out.cgene = "../data/raster/general_curvature.sgrd",
+  out.cplan = "../data/raster/plan_curvature.sgrd",
+  out.cprof = "../data/raster/profile_curvature.sgrd",
+  unit.slope = "percent")
+rsaga.wetness.index(
+  in.dem = "../data/raster/elevation.tif",
+  out.wetness.index = "../data/raster/twi.sgrd", 
+  out.carea = "../data/raster/catchment_area.sgrd", 
+  out.cslope = "../data/raster/catchment_slope.sgrd",
+  area.type = "absolute")
+```
 
-__Exercício 2__ A análise da imagem de satélite permite identificar uma série de feições espaciais na área de
+Em seguida carregamos os atributos de terreno para dentro do objeto `dem` usando `raster::stack`. Calculamos o
+logaritmo da área de captação para transformar os dados para uma escala mais estreita e interpretável. Ainda,
+transformamos os valores de declividade da área de captação de radianos para percentagem.
+
+```{r}
+dem <-
+  stack(
+    c("../data/raster/slope.sdat",
+    "../data/raster/general_curvature.sdat",
+    "../data/raster/plan_curvature.sdat", 
+    "../data/raster/profile_curvature.sdat",
+    "../data/raster/twi.sdat", 
+    "../data/raster/catchment_area.sdat",
+    "../data/raster/catchment_slope.sdat")) %>% 
+  stack(dem)
+dem[["catchment_area"]] <- log1p(dem[["catchment_area"]])
+dem[["catchment_slope"]] <- tan(dem[["catchment_slope"]]) * 100
+```
+
+Depois de processados, podemos visualizar os atributos de terreno usando o sombreamento e as curvas de nível 
+para auxiliar na sua interpretação.
+
+```{r}
+par(mfrow = c(3, 3))
+for (i in 9:1) {
+  plot(dem[["hillshade"]], col = grey(0:100/100), legend = FALSE, main = names(dem)[i])
+  plot(dem[[i]], col = terrain.colors(24, alpha = 0.50), add = TRUE)
+  plot(contour_lines, add = TRUE, col = "black", reset = FALSE)
+}
+```
+
+### Uso da terra e manejo do solo
+
+Vamos retornar à imagem de satélite da área de estudo.
+
+```{r}
+farm <- read_sf("../data/vector/farm.shp")
+mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
+```
+
+__Exercício 2__ A imagem de satélite nos permite identificar uma série de feições espaciais na área de
 estudo. Quais dessas feições você espera que estejam relacionadas aos valores -- a serem observados -- das
 propriedades do solo que se pretende mapear e, assim, estar determinando a sua distribuição espacial? Faça uma 
 lista com, no mínimo, 10 itens.
 
+1. ...
+2. ...
+3. ...
+4. ...
+5. ...
+6. ...
+7. ...
+8. ...
+9. ...
+10. ...
 
 ## Soil data
 
@@ -106,49 +181,6 @@ study_area %>%
 ```
 
 ## Covariates
-
-See the spatial distribution of the data.
-
-```{r}
-mapviewRaster(covar_data) +
-  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
-```
-
-### Terrain attibutes
-
-Compute some usefull terrain attibutes using RSAGA. Note the SAGA grid format (SDAT and SGRD).
-
-```{r}
-env <- RSAGA::rsaga.env()
-RSAGA::rsaga.slope.asp.curv(
-  in.dem = "../data/raster/dem_30m.tif",
-  out.slope = "../data/raster/slope.sgrd",
-  out.cgene = "../data/raster/general_curvature.sgrd",
-  out.cplan = "../data/raster/plan_curvature.sgrd",
-  out.cprof = "../data/raster/profile_curvature.sgrd",
-  unit.slope = "percent")
-RSAGA::rsaga.wetness.index(
-  in.dem = "../data/raster/dem_30m.tif",
-  out.wetness.index = "../data/raster/twi.sgrd", 
-  out.carea = "../data/raster/catch_area.sgrd", 
-  out.cslope = "../data/raster/catch_slope.sgrd", 
-  area.type = "absolute")
-```
-
-```{r}
-covar_data <-
-  raster::stack(
-    c("../data/raster/slope.sdat",
-    "../data/raster/general_curvature.sdat",
-    "../data/raster/plan_curvature.sdat", 
-    "../data/raster/profile_curvature.sdat",
-    "../data/raster/twi.sdat", 
-    "../data/raster/catch_area.sdat",
-    "../data/raster/catch_slope.sdat")) %>% 
-  raster::stack(covar_data)
-covar_data[["catch_area"]] <- log(covar_data[["catch_area"]])
-covar_data
-```
 
 ```{r}
 mapviewRaster(covar_data[[1:7]]) +
