@@ -17,6 +17,7 @@ library(mapview)
 mapviewOptions(basemaps = "Esri.WorldImagery")
 library(RSAGA)
 library(mapedit)
+library(fields)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -269,8 +270,70 @@ mapview(water_tank_dist) +
   mapviewFarm()
 ```
 
+### Imagens de satélite e índices de vegetação
+
+A análise da imagens de satélite da área de estudo mostra que a pastagem exibe alguma variação espacial na sua
+coloração. Essa variação pode ser devida às propriedades do solo. Assim, as bandas de um sensor orbital e os
+índices de vegetação podem ser úteis para explicar a variação espacial das propriedades do solo. Está disponível
+o índice de vegetação por diferença normalizada (NDVI) da área de estudo em três datas: 22/04/2013, 25/01/2016 
+e 20/04/2018. Vamos carregar os dados usando `raster::stack`.
+
+```{r}
+ndvi <- 
+  c("2013_04_22", "2016_01_25", "2018_04_20") %>% 
+  paste("../data/raster/ndvi_", ., ".tif", sep = "") %>% 
+  stack()
+mapviewFarm() +
+  mapview(ndvi, col.regions = terrain.colors(100))
+```
+
+A distribuição espacial do NDVI parece bastante correlacionada com a disposição dos piquetes de pastoreio. 
+Contudo, seria interessante conhecer a variação temporal do NDVI. Para isso, podemos calcular o seu desvio 
+padrão em cada célula usando a função `raster::calc`. Quanto maior o desvio padrão, maior a variação temporal 
+do NDVI. A magnitude da variação temporal do NDVI pode ajudar a identificar, por exemplo, áreas onde o solo 
+impõe maiores restrições ao crescimento vegetativo ao longo dos anos como menor fertilidade, menor profundidade,
+menor capacidade de retenção de água e elevada pedregosidade. Em locais como esses, a vegetação costuma ser mais
+sensível às condições meteorológicas extremas, apresentando mais variação no NDVI. (Note que os dados estão
+disponíveis para apenas três anos, o que pode não ser suficiente para representar a variação temporal do NDVI de
+maneira precisa.)
+
+```{r}
+ndvi$ndvi_variation <-
+  ndvi %>% 
+  calc(sd) %T>% 
+  plot()
+```
+
+### Propriedades do solo
+
+Informações indiretas sobre as propriedades do solo também podem auxiliar no entendimento da variação espacial
+das propriedades do solo que se pretende mapear. Uma delas é a condutividade elétrica aparente do solo. Vamos
+carregar os dados de condutividade elétrica aparente -- `"../data/vector/ec.shp"` -- disponíveis para a área de
+estudo. Note que os dados estão no formato vetorial (pontos) e precisam ser transformados para o formato
+matricial via interpolação. Contudo, como a densidade de pontos é muito elevada, faremos uma filtragem dos dados
+antes de proceder com a interpolação propriamente dita -- com `raster::rasterize`. Para isso, usaremos a mediana
+dos valores observados dentro de cada célula de 30 m x 30 m, ignorando assim valores discrepantes. Em seguida, 
+procedemos com a interpolação determinística usando as funções `fields::Tps` (_thin plate spline_) e
+`raster::interpolate`.
+
+```{r}
+ec <- 
+  read_sf("../data/vector/ec.shp") %>% 
+  st_transform(crs = 32722) %>% 
+  dplyr::select(CE37, CE75) %>% 
+  rasterize(dem[["slope"]], fun = median) %>% 
+  as("SpatialPointsDataFrame")
+tps_ec37 <- Tps(ec@coords, ec$CE37)
+tps_ec75 <- Tps(ec@coords, ec$CE75)
+ec %<>% rasterize(dem[["slope"]])
+ec <- ec[[c("CE37", "CE75")]]
+ec[["CE37"]] <- interpolate(ec[["CE37"]], tps_ec37)
+ec[["CE75"]] <- interpolate(ec[["CE75"]], tps_ec75)
+plot(ec)
+```
 
 ## Soil data
+
 
 ```{r, message=FALSE, warning=FALSE}
 # Download data
