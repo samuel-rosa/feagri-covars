@@ -1,8 +1,8 @@
 ---
-title: "Digital soil mapping for precision agriculture"
-subtitle: "FEAGRI-UNICAMP Workshop"
+title: "Mapeamento digital do solo para agricultura de precisão"
+subtitle: "FEAGRI-UNICAMP"
 author: "Alessandro Samuel-Rosa"
-date: "25 January 2019"
+date: "25 e 26 de janeiro de 2019"
 output: bookdown::html_document2
 lang: pt
 ---
@@ -15,10 +15,11 @@ library(sf)
 library(raster)
 library(mapview)
 library(RSAGA)
+library(mapedit)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
-produção de bovinos e corte no município de Caiuá, no oeste do estado de São Paulo. Dentre as propriedades do 
+produção de bovinos de corte no município de Caiuá, no oeste do estado de São Paulo. Dentre as propriedades do 
 solo estão: conteúdo de fósforo e bases trocáveis, capacidade de troca de cátions e saturação por bases, 
 conteúdo de micronutrientes, pH e acidez potencial, conteúdo de carbono orgânico, e distribuição do tamanho de
 partículas.
@@ -45,15 +46,16 @@ mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImager
 
 A imagem acima mostra que a área de estudo é cortada por inúmeros terraços, estruturas construídas para reduzir
 a energia cinética da água da chuva escoando na superfície do solo e, assim, reduzir a erosão do solo. Também
-observamos algumas escavações para coleta da enxurrada em pontos de convergência do terreno. Isso significa que
-o relevo pode exercer um controle importante da distribuição espacial das propriedades do solo.
+observamos algumas escavações para coleta da enxurrada em pontos de convergência do terreno. Como os fluxos 
+hídricos na paisagem influenciam a formação do solo, espera-se que o relevo da área de estudo exerça algum
+controle sobre a distribuição espacial das propriedades do solo.
 
 Vamos analisar mais de perto o relevo da área de estudo utilizando o modelo digital de elevação (MDE). Para 
 isso, primeiro calculamos o sombreamento do relevo usando `sf::gdal_utils`. Em seguida, carregamos os dois
 arquivos, `"../data/raster/elevation.tif"` e `"../data/raster/hillshade.tif"`, usando `raster::stack`, para 
-então gerar uma imagem com as duas camadas são sobrepostas, dando a impressão visual da forma do terreno (3d).
-Para auxiliar, adicionamos curvas de nível geradas com a função `raster::rasterToContour`. Na imagem, as partes
-mais baixas do terreno são mostradas em azul.
+então gerar uma imagem com as duas camadas sobrepostas, dando assim a impressão visual do formato 
+tridimensional do terreno. Para auxiliar, adicionamos curvas de nível geradas com a função 
+`raster::rasterToContour`.
 
 ```{r}
 gdal_utils(
@@ -99,9 +101,10 @@ rsaga.wetness.index(
   area.type = "absolute")
 ```
 
-Em seguida carregamos os atributos de terreno para dentro do objeto `dem` usando `raster::stack`. Calculamos o
-logaritmo da área de captação para transformar os dados para uma escala mais estreita e interpretável. Ainda,
-transformamos os valores de declividade da área de captação de radianos para percentagem.
+Em seguida carregamos os atributos de terreno computados usando o SAGA GIS para dentro do objeto `dem` -- 
+criado acima -- usando `raster::stack`. Calculamos o logaritmo da área de captação para transformar os dados 
+para uma escala mais estreita e interpretável. Ainda, transformamos os valores de declividade da área de 
+captação de radianos para porcentagem.
 
 ```{r}
 dem <-
@@ -118,13 +121,16 @@ dem[["catchment_area"]] <- log1p(dem[["catchment_area"]])
 dem[["catchment_slope"]] <- tan(dem[["catchment_slope"]]) * 100
 ```
 
-Depois de processados, podemos visualizar os atributos de terreno usando o sombreamento e as curvas de nível 
-para auxiliar na sua interpretação.
+Depois de processados, podemos visualizar os atributos do terreno usando o sombreamento e as curvas de nível 
+para auxiliar na sua interpretação. Como são vários os atributos do terreno, precisamos iterar sobre a função
+`plot` tantas vezes quantos forem os atributos do terreno usando a função `for`.
 
 ```{r}
-par(mfrow = c(3, 3))
-for (i in 9:1) {
-  plot(dem[["hillshade"]], col = grey(0:100/100), legend = FALSE, main = names(dem)[i])
+nr <- nlayers(dem) %>% sqrt() %>% ceiling()
+nc <- nlayers(dem) / nr
+par(mfrow = c(nr, nc))
+for (i in nlayers(dem):1) {
+  plot(dem[["hillshade"]], col = grey(0:100/100), legend = FALSE, main = names(dem)[i], axes = FALSE)
   plot(dem[[i]], col = terrain.colors(24, alpha = 0.50), add = TRUE)
   plot(contour_lines, add = TRUE, col = "black", reset = FALSE)
 }
@@ -132,17 +138,22 @@ for (i in 9:1) {
 
 ### Uso da terra e manejo do solo
 
-Vamos retornar à imagem de satélite da área de estudo.
+Vamos retornar à imagem de satélite da área de estudo para identificar feições relacionadas ao uso da terra e
+às práticas de manejo e conservação do solo que podem exercer algum controle sobre a distribuição espacial
+das propriedades do solo. Adicionamos as curvas de nível para auxiliar na representação da forma do terreno e,
+assim, identificar possíveis correlações entre o relevo e o uso da terra e as práticas de manejo e conservação 
+do solo.
 
 ```{r}
 farm <- read_sf("../data/vector/farm.shp")
-mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
+mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F) +
+  mapview(contour_lines)
 ```
 
-__Exercício 2__ A imagem de satélite nos permite identificar uma série de feições espaciais na área de
-estudo. Quais dessas feições você espera que estejam relacionadas aos valores -- a serem observados -- das
-propriedades do solo que se pretende mapear e, assim, estar determinando a sua distribuição espacial? Faça uma 
-lista com, no mínimo, 10 itens.
+__Exercício 2__ A imagem de satélite nos permite identificar uma série de feições espaciais relacionadas ao uso
+da terra e às práticas de manejo e conservação do solo na área de estudo. Quais dessas feições você espera que
+estejam relacionadas aos valores -- a serem observados -- das propriedades do solo que se pretende mapear e,
+assim, estar determinando a sua distribuição espacial? Faça uma lista com, no mínimo, 10 itens.
 
 1. ...
 2. ...
@@ -154,6 +165,45 @@ lista com, no mínimo, 10 itens.
 8. ...
 9. ...
 10. ...
+
+A primeira feição espacial relacionada ao uso da terra identificada na área de estudo é a sua subdivisão em 
+piquetes de pastoreio, indicando que os animais são conduzidos num sistema de pastoreio rotativo. O formato 
+retangular dos piquetes não indica nenhuma relação entre a sua construção e as feições do terreno. Contudo, é
+possível que diferentes práticas de manejo e conservação do solo sejam aplicadas em cada piquete, influenciando
+assim a distribuição espacial das propriedades do solo.
+
+Vamos carregar o arquivo vetorial `../data/vector/fields.shp` contendo os limites dos 27 piquetes de pastoreio.
+Em seguida, visualizamos os piquetes sobre a imagem de satélite usando `mapview::mapview`. Adicionamos o limite
+da área de estudo para verificar a consistência espacial dos dados dos piquetes de pastoreio.
+
+```{r}
+fields <- sf::read_sf("../data/vector/fields.shp")
+mapview::mapview(fields, map.types = "Esri.WorldImagery") +
+  mapview::mapview(farm, legend = FALSE, alpha.regions = 0.01, color = "red")
+```
+
+O primeiro detalhe que observamos é que o arquivo vetorial dos limites dos piquetes contém três área em branco.
+Trata-se das áreas de circulação dos animais entre os piquetes, as quais contém bebedouros. Vamos adicionar 
+três polígonos para representar cada uma dessas áreas. Para isso, usaremos a função `mapedit::editFeatures`. 
+Note que `mapedit::editFeatures` cria algumas novas variáveis de identificação dos polígonos. Como nosso 
+interesse é apenas na variável `id`, podemos descartar as demas usando `dplyr::select`. Note, também, que é 
+preciso atualizar a variável `id`, adicionando valores aos três novos polígonso criados. Fazemos isso usando 
+`dplyr::mutate`. Em seguida podemos visualizar o resultados da edição.
+
+```{r}
+if (nrow(fields) == 27 && !file.exists("../data/vector/fields2.shp")) {
+  fields %<>% 
+    mapedit::editFeatures() %>% 
+    dplyr::select(id) %>% 
+    dplyr::mutate(id = 1:nrow(.))
+  write_sf(fields, "../data/vector/fields2.shp")
+} else if (file.exists("../data/vector/fields2.shp")) {
+  fields <- read_sf("../data/vector/fields2.shp")
+}
+mapview::mapview(fields, map.types = "Esri.WorldImagery") +
+  mapview::mapview(farm, legend = FALSE, alpha.regions = 0.01, color = "red")
+```
+
 
 ## Soil data
 
@@ -265,18 +315,6 @@ covar_data[] %>%
   cor(use = "complete") %>% 
   round(2) %>% 
   pedometrics::plotCor()
-```
-
-### Other covariares
-
-```{r}
-fields <- 
-  sf::read_sf("../data/vector/fields.shp") %>% 
-  sf::st_transform(crs = 32722)
-fields$id <- 1:nrow(fields)
-mapview::mapview(fields, map.types = "Esri.WorldImagery", legend = FALSE) +
-  mapview::mapview(soil_data["observacao_id"], legend = FALSE) +
-  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
 ```
 
 ## Modelling
