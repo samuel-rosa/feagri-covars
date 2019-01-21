@@ -297,60 +297,6 @@ study_area %>%
 
 
 
-```{r}
-# Shapes to Grid
-# RSAGA::rsaga.get.libraries()
-# RSAGA::rsaga.get.lib.modules("grid_gridding")
-RSAGA::rsaga.geoprocessor(lib = "grid_gridding", module = 0, param = list(
-  INPUT = "../data/vector/seeds.shp",
-  TARGET_DEFINITION = 1,
-  TARGET_TEMPLATE = "../data/raster/slope.sgrd",
-  GRID = "../data/raster/seeds_grid.sgrd"))
-# Flow Path Length (Deterministic 8)
-# RSAGA::rsaga.get.libraries()
-# RSAGA::rsaga.get.lib.modules("ta_hydrology")
-RSAGA::rsaga.geoprocessor(lib = "ta_hydrology", module = 6, param = list(
-  ELEVATION = "../data/raster/dem_30m.tif",
-  SEED = "../data/raster/seeds_grid.sgrd",
-  LENGTH = "../data/raster/flow_path_length.sgrd",
-  SEEDS_ONLY = 1,
-  METHOD = 0
-))
-flow_length <- raster::raster("../data/raster/flow_path_length.sdat")
-raster::crs(flow_length) <- sf::st_crs(covar_data)$proj4string
-mapview::mapview(study_area, map.types = "Esri.WorldImagery", color = "red", alpha.region = 0.01) +
-  mapview::mapview(flow_length) +
-  mapview::mapview(seeds)
-```
-
-```{r}
-# Proximity Grid
-# RSAGA::rsaga.get.libraries()
-# RSAGA::rsaga.get.lib.modules("grid_tools")
-RSAGA::rsaga.geoprocessor(lib = "grid_tools", module = 26, param = list(
-  FEATURES = "../data/raster/seeds_grid.sgrd",
-  DISTANCE = "../data/raster/seeds_distance.sgrd"
-))
-seeds_dist <- raster::raster("../data/raster/seeds_distance.sdat")
-mapview::mapview(study_area, map.types = "Esri.WorldImagery", color = "red", alpha.region = 0.01) +
-  mapview::mapview(seeds_dist) +
-  mapview::mapview(seeds)
-```
-
-```{r}
-flow_length[] <- flow_length[] / max(flow_length[], na.rm = TRUE)
-flow_length[][is.na(flow_length[])] <- 1
-seeds_dist_plus <- seeds_dist * flow_length
-names(seeds_dist_plus) <- "seeds_dist_plus"
-mapview::mapview(study_area, map.types = "Esri.WorldImagery", color = "red", alpha.region = 0.01) +
-  mapview::mapview(seeds_dist_plus, col.regions = terrain.colors(800) %>% rev(), alpha.region = 1) +
-  mapview::mapview(seeds)
-```
-
-```{r}
-covar_data %<>%  raster::stack(seeds_dist_plus)
-```
-
 The correlation between covariates.
 
 ```{r}
