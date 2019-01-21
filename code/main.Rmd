@@ -14,6 +14,7 @@ library(dplyr)
 library(sf)
 library(raster)
 library(mapview)
+mapviewOptions(basemaps = "Esri.WorldImagery")
 library(RSAGA)
 library(mapedit)
 ```
@@ -39,7 +40,11 @@ carregamos o arquivo vetorial contendo o limite da área de estudo, `"../data/ve
 
 ```{r}
 farm <- read_sf("../data/vector/farm.shp")
-mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F)
+mapviewFarm <- 
+  function () {
+    mapview(farm, color = "red", alpha.regions = 0.01, legend = FALSE)
+  }
+mapviewFarm()
 ```
 
 ### Relevo
@@ -145,9 +150,8 @@ assim, identificar possíveis correlações entre o relevo e o uso da terra e as
 do solo.
 
 ```{r}
-farm <- read_sf("../data/vector/farm.shp")
-mapview(farm, color = "red", alpha.regions = 0.01, map.types = "Esri.WorldImagery", legend = F) +
-  mapview(contour_lines)
+mapview(contour_lines) +
+  mapviewFarm()
 ```
 
 __Exercício 2__ A imagem de satélite nos permite identificar uma série de feições espaciais relacionadas ao uso
@@ -178,30 +182,91 @@ da área de estudo para verificar a consistência espacial dos dados dos piquete
 
 ```{r}
 fields <- sf::read_sf("../data/vector/fields.shp")
-mapview::mapview(fields, map.types = "Esri.WorldImagery") +
-  mapview::mapview(farm, legend = FALSE, alpha.regions = 0.01, color = "red")
+mapview(fields) +
+  mapviewFarm()
 ```
 
 O primeiro detalhe que observamos é que o arquivo vetorial dos limites dos piquetes contém três área em branco.
 Trata-se das áreas de circulação dos animais entre os piquetes, as quais contém bebedouros. Vamos adicionar 
 três polígonos para representar cada uma dessas áreas. Para isso, usaremos a função `mapedit::editFeatures`. 
 Note que `mapedit::editFeatures` cria algumas novas variáveis de identificação dos polígonos. Como nosso 
-interesse é apenas na variável `id`, podemos descartar as demas usando `dplyr::select`. Note, também, que é 
-preciso atualizar a variável `id`, adicionando valores aos três novos polígonso criados. Fazemos isso usando 
-`dplyr::mutate`. Em seguida podemos visualizar o resultados da edição.
+interesse é apenas na variável `id`, podemos descartar as demais usando `dplyr::select`. Note, também, que é 
+preciso atualizar a variável `id`, adicionando valores aos três novos polígonos criados. Fazemos isso usando 
+`dplyr::mutate`. Em seguida, salvamos em disco os novos dados como `"../data/vector/fields2.shp"` a fim de não
+perdermos as edições realizadas em caso de reexecução do código fonte.
 
 ```{r}
 if (nrow(fields) == 27 && !file.exists("../data/vector/fields2.shp")) {
   fields %<>% 
-    mapedit::editFeatures() %>% 
+    editFeatures(map = m) %>% 
+    st_transform(crs = 32722) %>% 
     dplyr::select(id) %>% 
     dplyr::mutate(id = 1:nrow(.))
   write_sf(fields, "../data/vector/fields2.shp")
 } else if (file.exists("../data/vector/fields2.shp")) {
   fields <- read_sf("../data/vector/fields2.shp")
 }
-mapview::mapview(fields, map.types = "Esri.WorldImagery") +
-  mapview::mapview(farm, legend = FALSE, alpha.regions = 0.01, color = "red")
+mapview(fields) +
+  mapviewFarm()
+```
+
+Para utilizar as informações sobre os piquetes nas etapas subsequentes, é preciso transformar os dados vetoriais
+em dados matriciais. Vamos usar a função `raster::rasterize` para isso, usando o objeto `dem` como referência.
+
+```{r}
+fields %<>%
+  rasterize(y = dem, field = "id")
+mapview(fields) +
+  mapviewFarm()
+```
+
+Uma segunda informação que pode importante para explicar a distribuição espacial das propriedades do solo é a
+localização dos bebedouros. Isso porque os bebedouros, e seu entorno, são locais onde os animais costumam se
+aglomerar periodicamente. Espera-se que pisoteio e a defecação e micção periódicos nesses locais altere, 
+consideravelmente, as propriedades do solo, criando um ambiente diferenciado em relação ao restante da área de
+estudo.
+
+Vamos criar um vetor de pontos para indicar a localização dos tanques de água usando a função
+`mapedit::drawFeatures`. Note que `mapedit::drawFeatures` retorna um objeto com coordenadas geográficas. Para
+transformar as coordenadas para o sistema de referência de coodernadas EPSG:32722, usamos a função
+`sf::st_transform`. Ainda, criamos uma coluna `id` para identificar cada um dos tanques (`dplyr::mutate`) e
+descartamos as colunas criadas por `mapedit::drawFeatures` (`dplyr::select`). Salvamos o arquivo vetorial em 
+disco -- `"../data/vector/water_tank.shp"` para facilitar o seu reúso.
+
+```{r}
+if (!file.exists("../data/vector/water_tank.shp")) {
+  water_tank <- 
+    mapview(farm, alpha.regions = 0.01, color = "red") %>% 
+    drawFeatures() %>% 
+    st_transform(crs = 32722) %>% 
+    dplyr::mutate(id = 1:nrow(.)) %>% 
+    dplyr::select(id)
+  write_sf(water_tank, "../data/vector/water_tank.shp")
+  mapview(water_tank) +
+    mapviewFarm()
+} else {
+  water_tank <- read_sf("../data/vector/water_tank.shp")
+  mapview(water_tank) +
+    mapviewFarm()
+}
+```
+
+Assim como fora feito com os polígonos que representam os piquetes de pastoreio, os dados sobre a localização 
+dos bebedouros precisam ser transformados para o formato matricial. Como se trata de dados pontuais, que não
+cobrem toda a área de estudo, uma solução é computar uma mapa de distâncias até os tanques de água. Isso é
+razoável porque, em princípio, espera-se que o efeito do pisoteio, defecação e micção seja bastante localizado,
+diminuindo a medida que nos afastamos dos bebedouros. Para calcular a distância até os bebedouros usamos a 
+função `raster::distanceFromPoints` -- note que, primeiro, é preciso converter a classe do objeto `water_tank`
+de `sf` para `SpatialPointsDataFrame`.
+
+```{r}
+water_tank_dist <-
+  water_tank %>% 
+  as_Spatial() %>% 
+  distanceFromPoints(dem[["slope"]], .)
+mapview(water_tank_dist) +
+  mapview(water_tank, legend = FALSE) +
+  mapviewFarm()
 ```
 
 
@@ -230,29 +295,7 @@ study_area %>%
   dplyr::select(soil_data, observacao_id) %>% mapview::mapview(homebutton = FALSE, layer.name = "ID")
 ```
 
-## Covariates
 
-```{r}
-mapviewRaster(covar_data[[1:7]]) +
-  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
-```
-
-Create a terrain attribute to depict the upslope distance from source cells.
-
-```{r}
-if (file.exists("../data/vector/seeds.shp")) {
-  seeds <- sf::read_sf("../data/vector/seeds.shp")
-  mapview::mapview(seeds["id"], map.types = "Esri.WorldImagery")
-} else {
-  seeds <- 
-    mapview::mapview(study_area, alpha.regions = 0.01, color = "red", map.types = "Esri.WorldImagery") %>% 
-    mapedit::drawFeatures() %>% 
-    sf::st_transform(crs = 32722)
-  seeds$id <- 1
-  sf::write_sf(seeds, "../data/vector/seeds.shp")
-  mapview::mapview(seeds["id"], map.types = "Esri.WorldImagery")
-}
-```
 
 ```{r}
 # Shapes to Grid
