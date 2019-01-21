@@ -18,6 +18,9 @@ mapviewOptions(basemaps = "Esri.WorldImagery")
 library(RSAGA)
 library(mapedit)
 library(fields)
+library(googlesheets)
+library(readr)
+library(pedometrics)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -177,36 +180,13 @@ retangular dos piquetes não indica nenhuma relação entre a sua construção e
 possível que diferentes práticas de manejo e conservação do solo sejam aplicadas em cada piquete, influenciando
 assim a distribuição espacial das propriedades do solo.
 
-Vamos carregar o arquivo vetorial `../data/vector/fields.shp` contendo os limites dos 27 piquetes de pastoreio.
-Em seguida, visualizamos os piquetes sobre a imagem de satélite usando `mapview::mapview`. Adicionamos o limite
-da área de estudo para verificar a consistência espacial dos dados dos piquetes de pastoreio.
+Vamos carregar o arquivo vetorial `../data/vector/fields.shp` contendo os limites dos 26 piquetes de pastoreio 
+e as quatro áreas de circulação interna dos animais. Em seguida, visualizamos os piquetes sobre a imagem de
+satélite usando `mapview::mapview`. Adicionamos o limite da área de estudo para verificar a consistência 
+espacial dos dados dos piquetes de pastoreio.
 
 ```{r}
-fields <- sf::read_sf("../data/vector/fields.shp")
-mapview(fields) +
-  mapviewFarm()
-```
-
-O primeiro detalhe que observamos é que o arquivo vetorial dos limites dos piquetes contém três área em branco.
-Trata-se das áreas de circulação dos animais entre os piquetes, as quais contém bebedouros. Vamos adicionar 
-três polígonos para representar cada uma dessas áreas. Para isso, usaremos a função `mapedit::editFeatures`. 
-Note que `mapedit::editFeatures` cria algumas novas variáveis de identificação dos polígonos. Como nosso 
-interesse é apenas na variável `id`, podemos descartar as demais usando `dplyr::select`. Note, também, que é 
-preciso atualizar a variável `id`, adicionando valores aos três novos polígonos criados. Fazemos isso usando 
-`dplyr::mutate`. Em seguida, salvamos em disco os novos dados como `"../data/vector/fields2.shp"` a fim de não
-perdermos as edições realizadas em caso de reexecução do código fonte.
-
-```{r}
-if (nrow(fields) == 27 && !file.exists("../data/vector/fields2.shp")) {
-  fields %<>% 
-    editFeatures(map = m) %>% 
-    st_transform(crs = 32722) %>% 
-    dplyr::select(id) %>% 
-    dplyr::mutate(id = 1:nrow(.))
-  write_sf(fields, "../data/vector/fields2.shp")
-} else if (file.exists("../data/vector/fields2.shp")) {
-  fields <- read_sf("../data/vector/fields2.shp")
-}
+fields <- read_sf("../data/vector/fields.shp")
 mapview(fields) +
   mapviewFarm()
 ```
@@ -216,7 +196,8 @@ em dados matriciais. Vamos usar a função `raster::rasterize` para isso, usando
 
 ```{r}
 fields %<>%
-  rasterize(y = dem, field = "id")
+  rasterize(y = dem[["slope"]], field = "id")
+names(fields) <- "fields"
 mapview(fields) +
   mapviewFarm()
 ```
@@ -265,6 +246,7 @@ water_tank_dist <-
   water_tank %>% 
   as_Spatial() %>% 
   distanceFromPoints(dem[["slope"]], .)
+names(water_tank_dist) <- "water_tank_dist"
 mapview(water_tank_dist) +
   mapview(water_tank, legend = FALSE) +
   mapviewFarm()
@@ -282,9 +264,8 @@ e 20/04/2018. Vamos carregar os dados usando `raster::stack`.
 ndvi <- 
   c("2013_04_22", "2016_01_25", "2018_04_20") %>% 
   paste("../data/raster/ndvi_", ., ".tif", sep = "") %>% 
-  stack()
-mapviewFarm() +
-  mapview(ndvi, col.regions = terrain.colors(100))
+  stack() %T>% 
+  plot(col = terrain.colors(100))
 ```
 
 A distribuição espacial do NDVI parece bastante correlacionada com a disposição dos piquetes de pastoreio. 
@@ -319,7 +300,6 @@ procedemos com a interpolação determinística usando as funções `fields::Tps
 ```{r}
 ec <- 
   read_sf("../data/vector/ec.shp") %>% 
-  st_transform(crs = 32722) %>% 
   dplyr::select(CE37, CE75) %>% 
   rasterize(dem[["slope"]], fun = median) %>% 
   as("SpatialPointsDataFrame")
@@ -332,80 +312,199 @@ ec[["CE75"]] <- interpolate(ec[["CE75"]], tps_ec75)
 plot(ec)
 ```
 
-## Soil data
-
-
-```{r, message=FALSE, warning=FALSE}
-# Download data
-locale <- readr::locale(decimal_mark = ",")
-camada <- 
-  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
-  googlesheets::gs_key() %>% 
-  googlesheets::gs_read_csv(ws = "camada", locale = locale, comment = "#metadado>", verbose = FALSE)
-observacao <-
-  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
-  googlesheets::gs_key() %>% 
-  googlesheets::gs_read_csv(ws = "observacao", locale = locale, comment = "#metadado>", verbose = FALSE)
-soil_data <- 
-  merge(observacao, camada, by = "observacao_id") %>% 
-  sf::st_as_sf(coords = c("coord_x", "coord_y"), crs = 32722) %T>% 
-  print()
-```
+Para finalizar o processamento das covariáveis, vamos juntá-las em um único objeto `covar_data`. Os três 
+objetos originais, `dem`, `ec` e `ndvi`, podem ser removidos do ambiete de trabalho e assim liberar espaço da
+memória.
 
 ```{r}
-study_area %>% 
-  mapview::mapview(map.types = "Esri.WorldImagery", color = "red", alpha.regions = 0.01, legend = FALSE) +
-  dplyr::select(soil_data, observacao_id) %>% mapview::mapview(homebutton = FALSE, layer.name = "ID")
+covar_data <- 
+  stack(dem, ec, ndvi, fields, water_tank_dist) %>% 
+  dropLayer("hillshade")
+rm(dem, ec, ndvi, fields, water_tank_dist)
 ```
 
+A correlação linear entre as covariáveis pode ser observada usando a função `pedometrics::plotCor`. Note que, 
+em geral, a correlação linear entre as covariáveis é pequena, o que indica que há pouca redundância nos dados.
+A maior correlação é observada entre a curvatura geral e a curvatura de perfil -- r = 0.9. Isso significa que
+um dos dois atributos do terreno pode ser descartado, sem prejuízo ao conjunto de dados.
 
-
-The correlation between covariates.
-
-```{r}
-covar_data[] %>% 
+```{r, fig.asp=1}
+covar_data %>% 
+  values() %>% 
   cor(use = "complete") %>% 
   round(2) %>% 
-  pedometrics::plotCor()
+  plotCor(cex = 0.75)
 ```
 
-## Modelling
+## Amostragem do solo
 
-Sample covariates at the location of sampling points.
+Uma vez construída a base de dados espaciais da área de estudo, podemos proceder com a escolha dos locais de
+observaçaõ do solo. Usaremos as covariáveis para escolher os locais de observação num processo de otimização
+usando o pacote `spsann`. A localização das observações do solo será ecolhida de modo a cobrir a distribuição 
+marginal de cada covariável usando a função `spsann::optimDIST`. Como o solo da área de estudo já foi observado,
+nos limitaremos a escolher os locais de observação dentre as observações já existentes.
+
+Os dados do solo estão numa planilha no Google Drive (veja abaixo a chave de identificação da planilha),
+organizados conforme os padrões do Repositório Brasileiro Livre para Dados Abertos do Solo
+(http://coral.ufsm.br/febr/). Para descarrega-los, usaremos as funções `googlesheets::gs_key` e
+`googlesheets::gs_read_csv`. Note que é preciso usar a função `readr::locale` para especificar que utilizamos a
+vírgula como separador decimal. São duas planilhas, `observacao` e `camada`, que fundimos usando `merge` e, em
+seguida, transformamos para a classe `sf` usando `sf::st_as_sf`.
 
 ```{r}
-soil_data %<>% cbind(., raster::extract(covar_data, .))
-soil_data$fields <- raster::extract(sf::as_Spatial(fields), sf::as_Spatial(soil_data))[, "id"]
-```
-
-```{r}
-f <- fosforo_resina ~ slope + general_curvature + plan_curvature + profile_curvature + twi + catch_area + catch_slope + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ec + dem_30m + camada_id + seeds_dist_plus
-
-fit <- 
-  soil_data %>% 
-  caret::train(
-    f, data = ., na.action = na.omit,
-    method = "ranger", tuneGrid = data.frame(mtry = 4, splitrule = "variance", min.node.size = 5),
-    trControl = caret::trainControl(method = "LOOCV")) %T>%
+locale <- locale(decimal_mark = ",")
+camada <- 
+  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  gs_key() %>% 
+  gs_read_csv(ws = "camada", locale = locale, comment = "#metadado>", verbose = FALSE)
+observacao <-
+  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  gs_key() %>% 
+  gs_read_csv(ws = "observacao", locale = locale, comment = "#metadado>", verbose = FALSE)
+soil_data <- 
+  merge(observacao, camada, by = "observacao_id") %>% 
+  st_as_sf(coords = c("coord_x", "coord_y"), crs = 32722) %T>% 
   print()
-  caret::getModelInfo("rf")
+```
+
+Vamos visualizar a distribuição espacial das observações do solo na área de estudo.
+
+```{r}
+mapviewFarm() +
+  soil_data %>% dplyr::select(observacao_id) %>% mapview(homebutton = FALSE, layer.name = "ID")
+```
+
+O próximo passo consiste em amostrar os valores das cvariáveis nos locais de observação do solo. Para isso 
+usamos `raster::extract`. Em seguida, especificamos as covariáveis de tipo contínuo e categórico. Nesse estudo,
+temos apenas uma covariável categórica, especificamente, aquela que identifica os piquetes de pastoreio. Para
+isso usamos `dplyr::mutate`.
+
+```{r}
+soil_data %<>% cbind(., extract(covar_data, .))
+soil_data %<>% 
+  mutate(fields = as.factor(fields))
+```
+
+Agora podemos proceder com a otimização da configuração amostral usando `spsann::optimDIST` e os valores das 
+covariáveis nas observações existentes.
+
+```{r}
+if (!file.exists("../data/r/optimization.rda")) {
+  colNames <- function (x, col.names) {
+    colnames(x) <- col.names
+    as.matrix(x)
+  }
+bb <- soil_data %>% st_bbox()
+schedulle <- spsann::scheduleSPSANN(chains = 500, initial.temperature = 2, cellsize = 0.1)
+set.seed(1984)
+soil_data_100 <-
+  spsann::optimDIST(
+    points = 100, 
+    candi = 
+      soil_data %>% 
+      dplyr::filter(camada_id == 1) %>% 
+      st_coordinates(soil_data) %>% 
+      colNames(c("x", "y")), 
+    covars = 
+      soil_data %>% 
+      dplyr::filter(camada_id == 1) %>% 
+      dplyr::select(
+        slope, plan_curvature, profile_curvature, twi, catchment_area, catchment_slope, ndvi_2013_04_22,
+        ndvi_2016_01_25, ndvi_2018_04_20, ndvi_variation, CE37, CE75, fields, water_tank_dist, elevation) %>%
+      st_set_geometry(NULL),
+    use.coords = TRUE, schedule = schedulle, plotit = TRUE, track = TRUE, boundary = as_Spatial(farm))
+save(soil_data_100, file = "../data/r/optimization.rda")
+} else {
+  load("../data/r/optimization.rda")
+}
+```
+
+Depois da otimização, precisamos processar os dados.
+
+```{r}
+tmp_id <- 
+  soil_data %>% 
+  st_set_geometry(NULL) %>%
+  dplyr::filter(camada_id == 1) %>% 
+  dplyr::select(observacao_id) %>% 
+  .[soil_data_100$points$id, ]
+soil_data_100 <-
+  soil_data %>% 
+  dplyr::filter(observacao_id %in% tmp_id)
+rm(tmp_id)
+mapviewFarm() +
+  mapview(soil_data_100)
+```
+
+## Calibração do modelo
+
+```{r}
+f <- carbono_xxx_xxx_xxx ~ slope + plan_curvature + profile_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
 ```
 
 ```{r}
-soil_data %>% 
-  dplyr::select(areia_xxx_xxx_xxx) %>% 
-  dplyr::filter(areia_xxx_xxx_xxx > 890) %>%
-  mapview::mapview(map.types = "Esri.WorldImagery") + 
-  mapview::mapview(study_area, legend = FALSE, alpha.regions = 0.01, color = "red", homebutton = FALSE)
+fit_rf_100 <- 
+  soil_data_100 %>% 
+  caret::train(
+    f, data = ., na.action = na.omit, importance = "impurity",
+    method = "ranger", trControl = caret::trainControl(method = "LOOCV")) %T>%
+  print()
 ```
 
+```{r, fig.asp=1}
+par(mar = c(5, 8, 4, 2) + 0.1)
+ranger::importance(fit_rf_100$finalModel) %>% 
+  sort() %>% 
+  barplot(horiz = TRUE, las = 1, col = "firebrick", cex.names = 0.75)
+grid()
+```
 
+## Predição espacial
+
+```{r}
+pred_val <-
+  soil_data %>% 
+  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
+  predict(fit_rf_100, .)
+soil_data %>% 
+  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
+  dplyr::select(carbono_xxx_xxx_xxx) %>% 
+  mutate(
+    error = pred_val - carbono_xxx_xxx_xxx,
+    residual = mean(carbono_xxx_xxx_xxx) - carbono_xxx_xxx_xxx,
+    se = error^2,
+    sr = residual^2) %>% 
+  summarise(
+    sse = sum(se),
+    ssr = sum(sr),
+    r2 = 1 - sse/ssr)
+```
 
 ```{r}
 covar_data$camada_id <- 1
-soil_data$fosforo_resina_log <- log1p(soil_data$fosforo_resina)
-predictions <- raster::predict(covar_data, fit)
-mapviewRaster(predictions) + 
-  mapview::mapview(soil_data[soil_data$camada_id == 1, "fosforo_resina"], legend = FALSE)
+```
+
+```{r}
+covar_data$fields <- as.factor(covar_data$fields)
+pred_100 <- 
+  covar_data %>% 
+  predict(fit_rf_100)
+mapview(pred_100) + 
+  soil_data_100 %>% dplyr::filter(camada_id == 1) %>% dplyr::select("carbono_xxx_xxx_xxx") %>% mapview()
+```
+
+
+```{r}
+xy <-
+  soil_data %>% 
+  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
+  st_coordinates()
+res <- 
+  pred_val -
+  soil_data %>% 
+  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
+  dplyr::select(carbono_xxx_xxx_xxx) %>% 
+  st_drop_geometry()
+plotESDA(z = res$carbono_xxx_xxx_xxx, lat = xy[, "Y"], lon = xy[, "X"])
 ```
 
