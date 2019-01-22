@@ -23,6 +23,7 @@ library(readr)
 library(pedometrics)
 library(caret)
 library(gstat)
+library(glue)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -319,7 +320,7 @@ if (!file.exists("../data/raster/ec.grd")) {
 plot(ec)
 ```
 
-### Coordenadas espaciais
+### Covariáveis
 
 Para finalizar o processamento das covariáveis, vamos juntá-las em um único objeto `covar_data`. Os três 
 objetos originais, `dem`, `ec` e `ndvi`, podem ser removidos do ambiete de trabalho e assim liberar espaço da
@@ -370,7 +371,7 @@ usaremos as funções `googlesheets::gs_key` e `googlesheets::gs_read_csv`. Note
 São duas as planilhas com dados, `observacao` e `camada`, que fundimos usando `merge` e, em seguida,
 transformamos para a classe `sf` usando `sf::st_as_sf`.
 
-```{r}
+```{r, message=FALSE}
 locale <- locale(decimal_mark = ",")
 camada <- 
   "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
@@ -390,20 +391,14 @@ Vamos visualizar a distribuição espacial das observações do solo na área de
 de 0-20 cm e 228 amostras da camada de 20-40 cm.
 
 ```{r}
-soil_data %>% 
+n <-
+  soil_data %>% 
   mutate(camada_id = as.factor(camada_id)) %>% 
-  summarise(summary(camada_id))
+  summarise(summary(camada_id)) %>% 
+  unlist()
 mapviewFarm() +
-  mapview(soil_data[soil_data$camada_id == 1, "observacao_id"], layer.name = "0-20 cm") +
-  mapview(soil_data[soil_data$camada_id == 2, "observacao_id"], layer.name = "20-40 cm")
-```
-
-Vamos verificar a distribuição empírica de uma das propriedades do solo a serem mapeadas, por exemplo, a 
-saturação por bases, utilizada no cálculo da necessidade de calagem. Para isso, usamos a função
-`pedometrics::plotHD`.
-
-```{r, fig.asp=1}
-plotHD(soil_data[["bases_saturacao_calc"]])
+  mapview(soil_data[soil_data$camada_id == 1, "observacao_id"], layer.name = glue("0-20 cm<br>n = {n[1]}")) +
+  mapview(soil_data[soil_data$camada_id == 2, "observacao_id"], layer.name = glue("20-40 cm<br>n = {n[2]}"))
 ```
 
 O próximo passo consiste em amostrar os valores das covariáveis nos locais de observação do solo. Para isso 
@@ -417,20 +412,52 @@ soil_data %<>%
   print()
 ```
 
-Uma análise exploratória espacial dos dados pode ser feita com o auxílio da função `pedometrics::plotESDA`. 
-Vamos usar apenas os dados da camada de 0-20 cm de profundidade, que é a camada de interesse nesse estudo.
+### Análise exploratória espacial
+
+```{r}
+soil_var <- "potassio_resina"
+```
+
+Vamos fazer uma rápida análise exploratória espacial dos dados de uma das propriedades do solo a serem mapeadas,
+por exemplo, a saturação por bases, utilizada no cálculo da necessidade de calagem. Para isso, usamos a função
+`pedometrics::plotESDA`, que gera um histograma da distribuição dos dados, um gráfico de bolhas, um 
+semivariograma experimental, e um mapa do semivariograma experimental. Usaremos apenas os dados da camada de 
+0-20 cm de profundidade.
 
 ```{r, fig.asp=1}
 tmp <- 
   soil_data %>% 
-  dplyr::filter(camada_id == 1)
-plotESDA(z = tmp[["bases_saturacao_calc"]], lat = tmp[["y"]], lon = tmp[["x"]])
+  dplyr::filter(camada_id == 1) %>% 
+  cbind(., st_coordinates(.))
+plotESDA(z = tmp[[soil_var]], lat = tmp[["Y"]], lon = tmp[["X"]])
+```
+
+```{r, fig.asp=1}
+tmp <- 
+  soil_data %>% 
+  dplyr::filter(camada_id == 2) %>% 
+  cbind(., st_coordinates(.))
+plotESDA(z = tmp[[soil_var]], lat = tmp[["Y"]], lon = tmp[["X"]])
 ```
 
 ## Calibração dos modelos
 
+O primeiro passo da calibração de um modelo preditivo consiste na definição de uma fórmula que represete a 
+relação entre a variável depedente e as variáveis preditoras. Nesse caso, a variável dependente é uma 
+propriedade do solo, enquanto as variáveis preditoras são as covariáveis ambientais. Além dos atributos de
+terreno, das informações sobre o uso da terra e as práticas de manejo e conservação do solo, das imagens de
+satélite e índices de vegetação, e das informações indiretas sobre as propriedades do solo, usaremos como
+covariáveis ambas as coordenadas espaciais e o código de identificação da camada amostrada. A última é uma
+covariável importante pois, como sabemos, os dados provém das camadas de 0-10 e 20-40 cm de profundidade. Em
+geral, a camada superficial apresenta níveis superiores de nutrientes. Assim, os modelos poderão utilizar a 
+a covariável `camada_id` para explicar essas diferenças e fazer predições específicas para uma ou outra camada.
+
+Ao total, são 19 covariáveis, sendo que a covariável dos piquetes de pastoreio (`fields`) se desdobra em 
+tantas covariáveis quantos foram os seus níveis, menos 1. Assim, na prática, são cerca de 50 covariáveis.
+
 ```{r}
-f <- bases_saturacao_calc ~ x + y + slope + plan_curvature + profile_curvature + general_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
+f <- glue("{soil_var} ~ x + y + slope + plan_curvature + profile_curvature + general_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id") %>% as.formula()
+f_idw <- glue("{soil_var} ~ 1") %>% as.formula()
 ```
 
 ### Regressão linear múltipla
@@ -450,17 +477,6 @@ summary(fit_glm)
 ```
 
 ### Floresta aleatória
-
-O primeiro passo da calibração de um modelo preditivo consiste na definição de uma fórmula que represete a 
-relação entre a variável depedente e as variáveis preditoras. Nesse caso, a variável dependente é uma 
-propriedade do solo, a saturação por bases, enquanto as variáveis preditoras são as covariáveis ambientais. 
-Além dos atributos de terreno, das informações sobre o uso da terra e as práticas de manejo e conservação do 
-solo, das imagens de satélite e índices de vegetação, e das informações indiretas sobre as propriedades do solo,
-usaremos como covariáveis ambas as coordenadas espaciais e o código de identificação da camada amostrada. A
-última é uma covariável importante pois, como sabemos, os dados provém das camadas de 0-10 e 20-40 cm de
-profundidade. Em geral, a camada superficial apresenta níveis superiores de nutrientes, o que poderá ser
-explicado pelo modelo usando a covariável `camada_id`. Ao total, são 18 covariáiveis, sendo que a covariável 
-dos piquetes de pastoreio se desdobra em tantas covariáveis quantos foram os seus níveis, menos 1.
 
 Os parâmetros do modelo de floresta aleatória serão mantidos constantes. São eles:
 
@@ -494,20 +510,60 @@ ranger::importance(fit_rf$finalModel) %>%
 ### Interpolação ponderada pelo inverso da distância
 
 ```{r}
-fit_idw <- 
+# fit_idw <- 
+#   soil_data %>% 
+#   cbind(., st_coordinates(.)) %>% 
+#   as.data.frame() %>% 
+#   dplyr::filter(camada_id == 1) %>% 
+#   gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
+#   print()
+# cv_idw <-
+#   soil_data %>% 
+#   cbind(., st_coordinates(.)) %>% 
+#   as.data.frame() %>% 
+#   dplyr::filter(camada_id == 1) %>% 
+#   gstat.cv(fit_idw, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
+#            verbose = FALSE, debug.level = 0)
+fit_idw1 <- 
   soil_data %>% 
+  cbind(., st_coordinates(.)) %>% 
   as.data.frame() %>% 
   dplyr::filter(camada_id == 1) %>% 
-  gstat(
-  id = "bases_saturacao_calc", formula = bases_saturacao_calc ~ 1, locations = ~ x + y, data = ., nmax = 7, 
-  set = list(idp = .5)) %T>% 
+  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
   print()
-cv_idw <-
+cv_idw1 <-
   soil_data %>% 
+  cbind(., st_coordinates(.)) %>%
   as.data.frame() %>% 
   dplyr::filter(camada_id == 1) %>% 
-  gstat.cv(fit_idw, formula = bases_saturacao_calc ~ 1, locations = ~ x + y, data = ., nmax = 7, 
-  set = list(idp = .5), verbose = FALSE, debug.level = 0)
+  gstat.cv(fit_idw1, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
+           verbose = FALSE, debug.level = 0)
+# sapply(seq(2, 20, by = 4), function (nmax) {
+#   soil_data %>% 
+#   cbind(., st_coordinates(.)) %>% 
+#   as.data.frame() %>% 
+#   dplyr::filter(camada_id == 1) %>% 
+#     krige.cv(formula = f_idw, locations = ~ X + Y, data = ., nmax = nmax, set = list(idp = .5), 
+#            debug.level = 0) %>% 
+#     dplyr::select(residual) %>% 
+#     mutate(residual = residual^2) %>% 
+#     summarize(rmse = sqrt(mean(residual))) %>% 
+#     unlist()
+# })
+fit_idw2 <- 
+  soil_data %>% 
+  cbind(., st_coordinates(.)) %>% 
+  as.data.frame() %>% 
+  dplyr::filter(camada_id == 2) %>% 
+  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
+  print()
+cv_idw2 <-
+  soil_data %>% 
+    cbind(., st_coordinates(.)) %>% 
+  as.data.frame() %>% 
+  dplyr::filter(camada_id == 2) %>% 
+  gstat.cv(fit_idw2, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
+           verbose = FALSE, debug.level = 0)
 ```
 
 ## Validação dos modelos
@@ -523,14 +579,13 @@ dos dados em comparação ao uso da média dos dados.
 
 ```{r}
 soil_data %>% 
-  mutate(glm = fit_glm$pred$pred - bases_saturacao_calc,
-         rf  = fit_rf$pred$pred - bases_saturacao_calc) %>% 
-  dplyr::filter(camada_id == 1) %>% 
-  mutate(idw = cv_idw$bases_saturacao_calc.pred - bases_saturacao_calc) %>% 
+  mutate(idw = c(cv_idw1$soil.pred, cv_idw2$soil.pred) - c(cv_idw1$observed, cv_idw2$observed),
+         glm = fit_glm$pred$pred - .[[soil_var]],
+         rf  = fit_rf$pred$pred - .[[soil_var]]) %>% 
   as.data.frame() %>% 
-  dplyr::select(glm, rf, idw) %>% 
+  dplyr::select(idw, glm, rf) %>% 
   stack() %>% 
-  mutate(residual = rep(mean(cv_idw$observed) - cv_idw$observed, 3)) %>% 
+  mutate(residual = rep(mean(soil_data[[soil_var]]) - soil_data[[soil_var]], 3)) %>% 
   dplyr::group_by(ind) %>%
   dplyr::summarise(
     ME = mean(values),
@@ -549,35 +604,45 @@ covar_data$camada_id <- 1
 
 ```{r}
 pred_glm <- covar_data %>% predict(fit_glm, factors = list(fields = levels(soil_data$fields)))
-pred_rf <- covar_data %>% predict(fit_rf, factors = list(fields = levels(soil_data$fields)))
-pred_idw <- interpolate(covar_data, fit_idw)
+pred_rf  <- covar_data %>% predict(fit_rf, factors = list(fields = levels(soil_data$fields)))
+pred_idw <- interpolate(covar_data, fit_idw1, xyNames = c("X", "Y"))
 ```
 
 ```{r, fig.asp=1, fig.width=12}
 par(mfrow = c(2, 2))
-plot(pred_glm, main = "glm")
-plot(pred_rf, main = "rf")
-plot(pred_idw, main = "idw")
+plot(pred_glm, main = glue("{soil_var} - glm"))
+plot(pred_rf, main = glue("{soil_var} - rf"))
+plot(pred_idw, main = glue("{soil_var} - iwd"))
 ```
 
 ```{r}
-mapview(pred_glm) +
-mapview(pred_rf) +
-mapview(pred_idw) +
-  soil_data %>% dplyr::filter(camada_id == 1) %>% dplyr::select(bases_saturacao_calc) %>% mapview() +
+mapview(pred_glm, alpha.regions = 1) +
+mapview(pred_rf, alpha.regions = 1) +
+mapview(pred_idw, alpha.regions = 1) +
+  soil_data %>% dplyr::filter(camada_id == 1) %>% dplyr::select(soil_var) %>% mapview() +
   mapview(contour_lines)
 ```
 
 ```{r}
 tmp <- 
   soil_data %>% 
+  cbind(., st_coordinates(.)) %>% 
   mutate(
-    res_rf  = fit_rf$finalModel$predictions - bases_saturacao_calc,
-    res_glm = fit_glm$finalModel$fitted.values - bases_saturacao_calc) %>% 
+    res_rf  = fit_rf$finalModel$predictions - .[[soil_var]],
+    res_glm = fit_glm$finalModel$fitted.values - .[[soil_var]]) %>% 
   dplyr::filter(camada_id == 1)
-plotESDA(z = tmp[["res_glm"]], lat = tmp[["y"]], lon = tmp[["x"]])
+plotESDA(z = tmp[["res_glm"]], lat = tmp[["Y"]], lon = tmp[["X"]])
+plotESDA(z = tmp[["res_rf"]], lat = tmp[["Y"]], lon = tmp[["X"]])
 ```
 
 ```{r}
-plotESDA(z = tmp[["res_rf"]], lat = tmp[["y"]], lon = tmp[["x"]])
+tmp <- 
+  soil_data %>% 
+  cbind(., st_coordinates(.)) %>% 
+  mutate(
+    res_rf  = fit_rf$finalModel$predictions - .[[soil_var]],
+    res_glm = fit_glm$finalModel$fitted.values - .[[soil_var]]) %>% 
+  dplyr::filter(camada_id == 2)
+plotESDA(z = tmp[["res_glm"]], lat = tmp[["Y"]], lon = tmp[["X"]])
+plotESDA(z = tmp[["res_rf"]], lat = tmp[["Y"]], lon = tmp[["X"]])
 ```
