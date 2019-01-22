@@ -21,6 +21,7 @@ library(fields)
 library(googlesheets)
 library(readr)
 library(pedometrics)
+library(caret)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -439,12 +440,14 @@ mapviewFarm() +
 ## Calibração do modelo
 
 ```{r}
-f <- carbono_xxx_xxx_xxx ~ slope + plan_curvature + profile_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
+f <- carbono_xxx_xxx_xxx ~ coords.x1 + coords.x2 + slope + plan_curvature + profile_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
 ```
 
 ```{r}
 fit_rf_100 <- 
   soil_data_100 %>% 
+  as_Spatial() %>% 
+  as.data.frame() %>% 
   caret::train(
     f, data = ., na.action = na.omit, importance = "impurity",
     method = "ranger", trControl = caret::trainControl(method = "LOOCV")) %T>%
@@ -482,15 +485,17 @@ soil_data %>%
 
 ```{r}
 covar_data$camada_id <- 1
+covar_data$coords.x1 <- xFromCell(covar_data, 1:ncell(covar_data))
+covar_data$coords.x2 <- yFromCell(covar_data, 1:ncell(covar_data))
 ```
 
 ```{r}
-covar_data$fields <- as.factor(covar_data$fields)
 pred_100 <- 
   covar_data %>% 
-  predict(fit_rf_100)
+  predict(fit_rf_100, factors = list(fields = levels(soil_data$fields)))
 mapview(pred_100) + 
-  soil_data_100 %>% dplyr::filter(camada_id == 1) %>% dplyr::select("carbono_xxx_xxx_xxx") %>% mapview()
+  soil_data_100 %>% dplyr::filter(camada_id == 1) %>% dplyr::select("carbono_xxx_xxx_xxx") %>% mapview() +
+  mapview(contour_lines)
 ```
 
 
@@ -506,5 +511,19 @@ res <-
   dplyr::select(carbono_xxx_xxx_xxx) %>% 
   st_drop_geometry()
 plotESDA(z = res$carbono_xxx_xxx_xxx, lat = xy[, "Y"], lon = xy[, "X"])
+```
+
+```{r}
+res <-
+  soil_data %>% 
+  mutate(
+    pred = fit_rf_100$finalModel$predictions, 
+    res = pred - carbono_xxx_xxx_xxx) %>% 
+  filter(camada_id == 1)
+xy <-
+  soil_data %>% 
+  filter(camada_id == 1) %>% 
+  st_coordinates()
+plotESDA(z = res$res, lat = xy[, "Y"], lon = xy[, "X"])
 ```
 
