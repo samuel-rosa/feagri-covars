@@ -266,7 +266,7 @@ ndvi <-
   c("2013_04_22", "2016_01_25", "2018_04_20") %>% 
   paste("../data/raster/ndvi_", ., ".tif", sep = "") %>% 
   stack() %T>% 
-  plot(col = terrain.colors(100))
+  plot()
 ```
 
 A distribuição espacial do NDVI parece bastante correlacionada com a disposição dos piquetes de pastoreio. 
@@ -340,17 +340,24 @@ covar_data %>%
 ## Amostragem do solo
 
 Uma vez construída a base de dados espaciais da área de estudo, podemos proceder com a escolha dos locais de
-observaçaõ do solo. Usaremos as covariáveis para escolher os locais de observação num processo de otimização
-usando o pacote `spsann`. A localização das observações do solo será ecolhida de modo a cobrir a distribuição 
-marginal de cada covariável usando a função `spsann::optimDIST`. Como o solo da área de estudo já foi observado,
-nos limitaremos a escolher os locais de observação dentre as observações já existentes.
+observação do solo. Isso pode ser feito usando algoritmos que escolhem os locais de observação do solo de 
+maneira a atender a algum critério objetivo. O pacote `spsann` possui uma série de funções com essa finalidade.
+Uma delas, `spsann::optimDIST`, otimiza uma configuração amostral de maneira a melhor representar a distribuição
+marginal empírica de cada uma das covariáveis. Se entendemos que as covariáveis estão intimamente relacionadas 
+à distribuição espacial das propriedades do solo, então, ao representarmos sua distribuição marginal empírica,
+aumentamos nossas chances de obter dados mais representativos e, assim, produzir mapas mais acurados das 
+propriedades do solo.
 
-Os dados do solo estão numa planilha no Google Drive (veja abaixo a chave de identificação da planilha),
-organizados conforme os padrões do Repositório Brasileiro Livre para Dados Abertos do Solo
-(http://coral.ufsm.br/febr/). Para descarrega-los, usaremos as funções `googlesheets::gs_key` e
-`googlesheets::gs_read_csv`. Note que é preciso usar a função `readr::locale` para especificar que utilizamos a
-vírgula como separador decimal. São duas planilhas, `observacao` e `camada`, que fundimos usando `merge` e, em
-seguida, transformamos para a classe `sf` usando `sf::st_as_sf`.
+Os dados do solo utilizados neste estudo já foram coletados. Portanto, deixaremos de lado o processo de
+otimização e passaremos imediatamente ao processo de calibração dos modelos, validação e predição espacial.
+
+Os dados do solo estão numa planilha no Google Drive (https://goo.gl/qcM2uq), organizados conforme os padrões 
+do Repositório Brasileiro Livre para Dados Abertos do Solo (http://coral.ufsm.br/febr/). Para descarregá-los,
+usaremos as funções `googlesheets::gs_key` e `googlesheets::gs_read_csv`. Note que é preciso usar a função
+`readr::locale` para especificar que utilizamos a vírgula como separador decimal. 
+
+São duas as planilhas com dados, `observacao` e `camada`, que fundimos usando `merge` e, em seguida,
+transformamos para a classe `sf` usando `sf::st_as_sf`.
 
 ```{r}
 locale <- locale(decimal_mark = ",")
@@ -368,73 +375,35 @@ soil_data <-
   print()
 ```
 
-Vamos visualizar a distribuição espacial das observações do solo na área de estudo.
+Vamos visualizar a distribuição espacial das observações do solo na área de estudo. São 399 amostras da camada
+de 0-20 cm e 228 amostras da camada de 20-40 cm.
 
 ```{r}
+soil_data %>% 
+  mutate(camada_id = as.factor(camada_id)) %>% 
+  summarise(summary(camada_id))
 mapviewFarm() +
-  soil_data %>% dplyr::select(observacao_id) %>% mapview(homebutton = FALSE, layer.name = "ID")
+  mapview(soil_data[soil_data$camada_id == 1, "observacao_id"], layer.name = "0-20 cm") +
+  mapview(soil_data[soil_data$camada_id == 2, "observacao_id"], layer.name = "20-40 cm")
 ```
 
-O próximo passo consiste em amostrar os valores das cvariáveis nos locais de observação do solo. Para isso 
+Vamos verificar a distribuição empírica de uma das propriedades do solo a serem mapeadas, por exemplo, a 
+saturação por bases, utilizada no cálculo da necessidade de calagem. Para isso, usamos a função
+`pedometrics::plotHD`.
+
+```{r, fig.asp=1}
+plotHD(soil_data$bases_saturacao_calc)
+```
+
+O próximo passo consiste em amostrar os valores das covariáveis nos locais de observação do solo. Para isso 
 usamos `raster::extract`. Em seguida, especificamos as covariáveis de tipo contínuo e categórico. Nesse estudo,
 temos apenas uma covariável categórica, especificamente, aquela que identifica os piquetes de pastoreio. Para
 isso usamos `dplyr::mutate`.
 
 ```{r}
-soil_data %<>% cbind(., extract(covar_data, .))
 soil_data %<>% 
+  cbind(., extract(covar_data, .)) %<>% 
   mutate(fields = as.factor(fields))
-```
-
-Agora podemos proceder com a otimização da configuração amostral usando `spsann::optimDIST` e os valores das 
-covariáveis nas observações existentes.
-
-```{r}
-if (!file.exists("../data/r/optimization.rda")) {
-  colNames <- function (x, col.names) {
-    colnames(x) <- col.names
-    as.matrix(x)
-  }
-bb <- soil_data %>% st_bbox()
-schedulle <- spsann::scheduleSPSANN(chains = 500, initial.temperature = 2, cellsize = 0.1)
-set.seed(1984)
-soil_data_100 <-
-  spsann::optimDIST(
-    points = 100, 
-    candi = 
-      soil_data %>% 
-      dplyr::filter(camada_id == 1) %>% 
-      st_coordinates(soil_data) %>% 
-      colNames(c("x", "y")), 
-    covars = 
-      soil_data %>% 
-      dplyr::filter(camada_id == 1) %>% 
-      dplyr::select(
-        slope, plan_curvature, profile_curvature, twi, catchment_area, catchment_slope, ndvi_2013_04_22,
-        ndvi_2016_01_25, ndvi_2018_04_20, ndvi_variation, CE37, CE75, fields, water_tank_dist, elevation) %>%
-      st_set_geometry(NULL),
-    use.coords = TRUE, schedule = schedulle, plotit = TRUE, track = TRUE, boundary = as_Spatial(farm))
-save(soil_data_100, file = "../data/r/optimization.rda")
-} else {
-  load("../data/r/optimization.rda")
-}
-```
-
-Depois da otimização, precisamos processar os dados.
-
-```{r}
-tmp_id <- 
-  soil_data %>% 
-  st_set_geometry(NULL) %>%
-  dplyr::filter(camada_id == 1) %>% 
-  dplyr::select(observacao_id) %>% 
-  .[soil_data_100$points$id, ]
-soil_data_100 <-
-  soil_data %>% 
-  dplyr::filter(observacao_id %in% tmp_id)
-rm(tmp_id)
-mapviewFarm() +
-  mapview(soil_data_100)
 ```
 
 ## Calibração do modelo
