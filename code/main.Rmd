@@ -22,6 +22,7 @@ library(googlesheets)
 library(readr)
 library(pedometrics)
 library(caret)
+library(gstat)
 ```
 
 Este estudo tem como objetivo realizar o mapeamento de uma série de propriedades do solo em uma fazenda de 
@@ -299,35 +300,45 @@ procedemos com a interpolação determinística usando as funções `fields::Tps
 `raster::interpolate`.
 
 ```{r}
-ec <- 
-  read_sf("../data/vector/ec.shp") %>% 
-  dplyr::select(CE37, CE75) %>% 
-  rasterize(dem[["slope"]], fun = median) %>% 
-  as("SpatialPointsDataFrame")
-tps_ec37 <- Tps(ec@coords, ec$CE37)
-tps_ec75 <- Tps(ec@coords, ec$CE75)
-ec %<>% rasterize(dem[["slope"]])
-ec <- ec[[c("CE37", "CE75")]]
-ec[["CE37"]] <- interpolate(ec[["CE37"]], tps_ec37)
-ec[["CE75"]] <- interpolate(ec[["CE75"]], tps_ec75)
+if (!file.exists("../data/raster/ec.grd")) {
+  ec <- 
+    read_sf("../data/vector/ec.shp") %>% 
+    dplyr::select(CE37, CE75) %>% 
+    rasterize(dem[["slope"]], fun = median) %>% 
+    as("SpatialPointsDataFrame")
+  tps_ec37 <- Tps(ec@coords, ec$CE37)
+  tps_ec75 <- Tps(ec@coords, ec$CE75)
+  ec %<>% rasterize(dem[["slope"]])
+  ec <- ec[[c("CE37", "CE75")]]
+  ec[["CE37"]] <- interpolate(ec[["CE37"]], tps_ec37)
+  ec[["CE75"]] <- interpolate(ec[["CE75"]], tps_ec75)
+  writeRaster(ec, file = "../data/raster/ec.grd", format = "raster")
+} else {
+  ec <- stack("../data/raster/ec.grd")
+}
 plot(ec)
 ```
 
+### Coordenadas espaciais
+
 Para finalizar o processamento das covariáveis, vamos juntá-las em um único objeto `covar_data`. Os três 
 objetos originais, `dem`, `ec` e `ndvi`, podem ser removidos do ambiete de trabalho e assim liberar espaço da
-memória.
+memória. Finalmente, adicionamos as coordenadas espaciais, x e y, às covariáveis a fim de que também sejam 
+usadas para calibração dos modelos e predição espacial das propriedades do solo.
 
 ```{r}
 covar_data <- 
   stack(dem, ec, ndvi, fields, water_tank_dist) %>% 
   dropLayer("hillshade")
+covar_data$x <- xFromCell(covar_data, 1:ncell(covar_data))
+covar_data$y <- yFromCell(covar_data, 1:ncell(covar_data))
 rm(dem, ec, ndvi, fields, water_tank_dist)
 ```
 
 A correlação linear entre as covariáveis pode ser observada usando a função `pedometrics::plotCor`. Note que, 
 em geral, a correlação linear entre as covariáveis é pequena, o que indica que há pouca redundância nos dados.
-A maior correlação é observada entre a curvatura geral e a curvatura de perfil -- r = 0.9. Isso significa que
-um dos dois atributos do terreno pode ser descartado, sem prejuízo ao conjunto de dados.
+As maiores correlações observada são entre a curvatura geral e a curvatura de perfil (r = 0.90) e entre a 
+elevação e a coordenada y (r = -0.96).
 
 ```{r, fig.asp=1}
 covar_data %>% 
@@ -392,107 +403,181 @@ saturação por bases, utilizada no cálculo da necessidade de calagem. Para iss
 `pedometrics::plotHD`.
 
 ```{r, fig.asp=1}
-plotHD(soil_data$bases_saturacao_calc)
+plotHD(soil_data[["bases_saturacao_calc"]])
 ```
 
 O próximo passo consiste em amostrar os valores das covariáveis nos locais de observação do solo. Para isso 
-usamos `raster::extract`. Em seguida, especificamos as covariáveis de tipo contínuo e categórico. Nesse estudo,
-temos apenas uma covariável categórica, especificamente, aquela que identifica os piquetes de pastoreio. Para
-isso usamos `dplyr::mutate`.
+usamos `raster::extract`. Em seguida, especificamos as covariáveis de tipo categórico. Nesse estudo, temos 
+apenas uma covariável categórica, especificamente, aquela que identifica os piquetes de pastoreio.
 
 ```{r}
 soil_data %<>% 
   cbind(., extract(covar_data, .)) %<>% 
-  mutate(fields = as.factor(fields))
-```
-
-## Calibração do modelo
-
-```{r}
-f <- carbono_xxx_xxx_xxx ~ coords.x1 + coords.x2 + slope + plan_curvature + profile_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
-```
-
-```{r}
-fit_rf_100 <- 
-  soil_data_100 %>% 
-  as_Spatial() %>% 
-  as.data.frame() %>% 
-  caret::train(
-    f, data = ., na.action = na.omit, importance = "impurity",
-    method = "ranger", trControl = caret::trainControl(method = "LOOCV")) %T>%
+  mutate(fields = as.factor(fields)) %T>% 
   print()
 ```
 
+Uma análise exploratória espacial dos dados pode ser feita com o auxílio da função `pedometrics::plotESDA`. 
+Vamos usar apenas os dados da camada de 0-20 cm de profundidade, que é a camada de interesse nesse estudo.
+
 ```{r, fig.asp=1}
-par(mar = c(5, 8, 4, 2) + 0.1)
-ranger::importance(fit_rf_100$finalModel) %>% 
+tmp <- 
+  soil_data %>% 
+  dplyr::filter(camada_id == 1)
+plotESDA(z = tmp[["bases_saturacao_calc"]], lat = tmp[["y"]], lon = tmp[["x"]])
+```
+
+## Calibração dos modelos
+
+```{r}
+f <- bases_saturacao_calc ~ x + y + slope + plan_curvature + profile_curvature + general_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id
+```
+
+### Regressão linear múltipla
+
+```{r}
+fit_glm <-
+  soil_data %>% 
+  train(
+    f, data = ., method = "glm", 
+    trControl = trainControl(method = "LOOCV"),
+    na.action = na.omit) %T>%
+  print()
+```
+
+```{r}
+summary(fit_glm)
+```
+
+### Floresta aleatória
+
+O primeiro passo da calibração de um modelo preditivo consiste na definição de uma fórmula que represete a 
+relação entre a variável depedente e as variáveis preditoras. Nesse caso, a variável dependente é uma 
+propriedade do solo, a saturação por bases, enquanto as variáveis preditoras são as covariáveis ambientais. 
+Além dos atributos de terreno, das informações sobre o uso da terra e as práticas de manejo e conservação do 
+solo, das imagens de satélite e índices de vegetação, e das informações indiretas sobre as propriedades do solo,
+usaremos como covariáveis ambas as coordenadas espaciais e o código de identificação da camada amostrada. A
+última é uma covariável importante pois, como sabemos, os dados provém das camadas de 0-10 e 20-40 cm de
+profundidade. Em geral, a camada superficial apresenta níveis superiores de nutrientes, o que poderá ser
+explicado pelo modelo usando a covariável `camada_id`. Ao total, são 18 covariáiveis, sendo que a covariável 
+dos piquetes de pastoreio se desdobra em tantas covariáveis quantos foram os seus níveis, menos 1.
+
+Os parâmetros do modelo de floresta aleatória serão mantidos constantes. São eles:
+
+* `splitrule = "variance"`
+* `min.node.size = 5`
+* `mtry = floor(sqrt(p))`
+
+```{r}
+p <- fit_glm$finalModel %>% coef() %>% length() - 1
+fit_rf <- 
+  soil_data %>% 
+  as.data.frame() %>% 
+  train(
+    f, data = ., method = "ranger", importance = "impurity", num.trees = 500,
+    tuneGrid = data.frame(mtry = floor(sqrt(p)), splitrule = "variance", min.node.size = 5),
+    trControl = trainControl(method = "LOOCV"), na.action = na.omit) %T>%
+  print()
+```
+
+```{r}
+fit_rf$finalModel
+```
+
+```{r, fig.asp=1}
+par(mar = c(2, 8, 2, 2) + 0.1)
+ranger::importance(fit_rf$finalModel) %>% 
   sort() %>% 
   barplot(horiz = TRUE, las = 1, col = "firebrick", cex.names = 0.75)
-grid()
+```
+
+### Interpolação ponderada pelo inverso da distância
+
+```{r}
+fit_idw <- 
+  soil_data %>% 
+  as.data.frame() %>% 
+  dplyr::filter(camada_id == 1) %>% 
+  gstat(
+  id = "bases_saturacao_calc", formula = bases_saturacao_calc ~ 1, locations = ~ x + y, data = ., nmax = 7, 
+  set = list(idp = .5)) %T>% 
+  print()
+cv_idw <-
+  soil_data %>% 
+  as.data.frame() %>% 
+  dplyr::filter(camada_id == 1) %>% 
+  gstat.cv(fit_idw, formula = bases_saturacao_calc ~ 1, locations = ~ x + y, data = ., nmax = 7, 
+  set = list(idp = .5), verbose = FALSE, debug.level = 0)
+```
+
+## Validação dos modelos
+
+Estatísticas do erro de predição na validação cruzada, levando em consideração apenas as observções da camada
+de 0-20 cm de profundidade. As estatísticas do erro são erro médio (ME), erro mediano (MedE), erro quadrático 
+médio (MSE), erro absoluto médio (MAE), quantidade de variância explicada (AVE), e quantidade de variância
+explicada modificada (mAVE). A quantidade de variância explicada (amount of variance explained) é equivalente
+ao coefficiente de deteminação. Já mAVE consiste no uso de erros e resíduos absolutos, ao invés do seu quadrado,
+para calcular a quantidade de variância explicada. Trata-se de uma medida robusta à presença de observações 
+discrepantes que inflam o AVE. Ambas as medidas representam o quão eficiente o modelo é em explicar a variância
+dos dados em comparação ao uso da média dos dados.
+
+```{r}
+soil_data %>% 
+  mutate(glm = fit_glm$pred$pred - bases_saturacao_calc,
+         rf  = fit_rf$pred$pred - bases_saturacao_calc) %>% 
+  dplyr::filter(camada_id == 1) %>% 
+  mutate(idw = cv_idw$bases_saturacao_calc.pred - bases_saturacao_calc) %>% 
+  as.data.frame() %>% 
+  dplyr::select(glm, rf, idw) %>% 
+  stack() %>% 
+  mutate(residual = rep(mean(cv_idw$observed) - cv_idw$observed, 3)) %>% 
+  dplyr::group_by(ind) %>%
+  dplyr::summarise(
+    ME = mean(values),
+    MedE = median(values),
+    MSE = mean(values^2),
+    MAE = mean(abs(values)),
+    AVE = 1 - sum(values^2) / sum(residual^2),
+    mAVE = 1 - sum(abs(values)) / sum(abs(residual)))
 ```
 
 ## Predição espacial
 
 ```{r}
-pred_val <-
-  soil_data %>% 
-  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
-  predict(fit_rf_100, .)
-soil_data %>% 
-  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
-  dplyr::select(carbono_xxx_xxx_xxx) %>% 
-  mutate(
-    error = pred_val - carbono_xxx_xxx_xxx,
-    residual = mean(carbono_xxx_xxx_xxx) - carbono_xxx_xxx_xxx,
-    se = error^2,
-    sr = residual^2) %>% 
-  summarise(
-    sse = sum(se),
-    ssr = sum(sr),
-    r2 = 1 - sse/ssr)
-```
-
-```{r}
 covar_data$camada_id <- 1
-covar_data$coords.x1 <- xFromCell(covar_data, 1:ncell(covar_data))
-covar_data$coords.x2 <- yFromCell(covar_data, 1:ncell(covar_data))
 ```
 
 ```{r}
-pred_100 <- 
-  covar_data %>% 
-  predict(fit_rf_100, factors = list(fields = levels(soil_data$fields)))
-mapview(pred_100) + 
-  soil_data_100 %>% dplyr::filter(camada_id == 1) %>% dplyr::select("carbono_xxx_xxx_xxx") %>% mapview() +
+pred_glm <- covar_data %>% predict(fit_glm, factors = list(fields = levels(soil_data$fields)))
+pred_rf <- covar_data %>% predict(fit_rf, factors = list(fields = levels(soil_data$fields)))
+pred_idw <- interpolate(covar_data, fit_idw)
+```
+
+```{r, fig.asp=1, fig.width=12}
+par(mfrow = c(2, 2))
+plot(pred_glm, main = "glm")
+plot(pred_rf, main = "rf")
+plot(pred_idw, main = "idw")
+```
+
+```{r}
+mapview(pred_glm) +
+mapview(pred_rf) +
+mapview(pred_idw) +
+  soil_data %>% dplyr::filter(camada_id == 1) %>% dplyr::select(bases_saturacao_calc) %>% mapview() +
   mapview(contour_lines)
 ```
 
-
 ```{r}
-xy <-
-  soil_data %>% 
-  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
-  st_coordinates()
-res <- 
-  pred_val -
-  soil_data %>% 
-  dplyr::filter(!observacao_id %in% soil_data_100$observacao_id & camada_id == 1) %>% 
-  dplyr::select(carbono_xxx_xxx_xxx) %>% 
-  st_drop_geometry()
-plotESDA(z = res$carbono_xxx_xxx_xxx, lat = xy[, "Y"], lon = xy[, "X"])
-```
-
-```{r}
-res <-
+tmp <- 
   soil_data %>% 
   mutate(
-    pred = fit_rf_100$finalModel$predictions, 
-    res = pred - carbono_xxx_xxx_xxx) %>% 
-  filter(camada_id == 1)
-xy <-
-  soil_data %>% 
-  filter(camada_id == 1) %>% 
-  st_coordinates()
-plotESDA(z = res$res, lat = xy[, "Y"], lon = xy[, "X"])
+    res_rf  = fit_rf$finalModel$predictions - bases_saturacao_calc,
+    res_glm = fit_glm$finalModel$fitted.values - bases_saturacao_calc) %>% 
+  dplyr::filter(camada_id == 1)
+plotESDA(z = tmp[["res_glm"]], lat = tmp[["y"]], lon = tmp[["x"]])
 ```
 
+```{r}
+plotESDA(z = tmp[["res_rf"]], lat = tmp[["y"]], lon = tmp[["x"]])
+```
