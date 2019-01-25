@@ -51,7 +51,6 @@ mapviewFarm <-
   function () {
     mapview(farm, color = "red", alpha.regions = 0.01, legend = FALSE)
   }
-mapviewFarm()
 ```
 
 ### Relevo
@@ -415,7 +414,7 @@ soil_data %<>%
 ### Análise exploratória espacial
 
 ```{r}
-soil_var <- "potassio_resina"
+soil_var <- "bases_saturacao_calc"
 ```
 
 Vamos fazer uma rápida análise exploratória espacial dos dados de uma das propriedades do solo a serem mapeadas,
@@ -456,8 +455,12 @@ Ao total, são 19 covariáveis, sendo que a covariável dos piquetes de pastorei
 tantas covariáveis quantos foram os seus níveis, menos 1. Assim, na prática, são cerca de 50 covariáveis.
 
 ```{r}
-f <- glue("{soil_var} ~ x + y + slope + plan_curvature + profile_curvature + general_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id") %>% as.formula()
-f_idw <- glue("{soil_var} ~ 1") %>% as.formula()
+f <- 
+  glue("{soil_var} ~ x + y + slope + plan_curvature + profile_curvature + general_curvature + twi + catchment_area + catchment_slope + elevation + CE37 + CE75 + ndvi_2013_04_22 + ndvi_2016_01_25 + ndvi_2018_04_20 + ndvi_variation + fields + water_tank_dist + camada_id") %>%
+  as.formula()
+f_idw <- 
+  glue("{soil_var} ~ 1") %>% 
+  as.formula()
 ```
 
 ### Regressão linear múltipla
@@ -485,7 +488,10 @@ Os parâmetros do modelo de floresta aleatória serão mantidos constantes. São
 * `mtry = floor(sqrt(p))`
 
 ```{r}
-p <- fit_glm$finalModel %>% coef() %>% length() - 1
+p <- 
+  fit_glm$finalModel %>% 
+  coef() %>% 
+  length() - 1
 fit_rf <- 
   soil_data %>% 
   as.data.frame() %>% 
@@ -510,6 +516,28 @@ ranger::importance(fit_rf$finalModel) %>%
 ### Interpolação ponderada pelo inverso da distância
 
 ```{r}
+library(parallel)
+optim_iwd <- 
+  mclapply(c(0.5, 1, 2, 4), function (idp) {
+    res <-
+      soil_data %>%
+      cbind(., st_coordinates(.)) %>%
+      as.data.frame() %>%
+      dplyr::filter(camada_id == 1) %>%
+      krige.cv(formula = f_idw, locations = ~ X + Y, data = ., nmax = 6, set = list(idp = idp), 
+               debug.level = 0) %>%
+      dplyr::select(residual) %>%
+      mutate(residual = residual^2) %>%
+      summarize(rmse = sqrt(mean(residual))) %>%
+      unlist()
+    names(res) <- idp
+    return (res)
+  }, mc.cores = 4) %>% 
+  unlist() %T>%
+  print()
+```
+
+```{r}
 # fit_idw <- 
 #   soil_data %>% 
 #   cbind(., st_coordinates(.)) %>% 
@@ -529,40 +557,26 @@ fit_idw1 <-
   cbind(., st_coordinates(.)) %>% 
   as.data.frame() %>% 
   dplyr::filter(camada_id == 1) %>% 
-  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
-  print()
+  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 6, set = list(idp = 2))
 cv_idw1 <-
   soil_data %>% 
   cbind(., st_coordinates(.)) %>%
   as.data.frame() %>% 
   dplyr::filter(camada_id == 1) %>% 
-  gstat.cv(fit_idw1, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
+  gstat.cv(fit_idw1, formula = f_idw, locations = ~ X + Y, data = ., nmax = 6, set = list(idp = 2), 
            verbose = FALSE, debug.level = 0)
-# sapply(seq(2, 20, by = 4), function (nmax) {
-#   soil_data %>% 
-#   cbind(., st_coordinates(.)) %>% 
-#   as.data.frame() %>% 
-#   dplyr::filter(camada_id == 1) %>% 
-#     krige.cv(formula = f_idw, locations = ~ X + Y, data = ., nmax = nmax, set = list(idp = .5), 
-#            debug.level = 0) %>% 
-#     dplyr::select(residual) %>% 
-#     mutate(residual = residual^2) %>% 
-#     summarize(rmse = sqrt(mean(residual))) %>% 
-#     unlist()
-# })
 fit_idw2 <- 
   soil_data %>% 
   cbind(., st_coordinates(.)) %>% 
   as.data.frame() %>% 
   dplyr::filter(camada_id == 2) %>% 
-  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
-  print()
+  gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 6, set = list(idp = 2))
 cv_idw2 <-
   soil_data %>% 
     cbind(., st_coordinates(.)) %>% 
   as.data.frame() %>% 
   dplyr::filter(camada_id == 2) %>% 
-  gstat.cv(fit_idw2, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
+  gstat.cv(fit_idw2, formula = f_idw, locations = ~ X + Y, data = ., nmax = 6, set = list(idp = 2), 
            verbose = FALSE, debug.level = 0)
 ```
 
@@ -610,15 +624,18 @@ pred_idw <- interpolate(covar_data, fit_idw1, xyNames = c("X", "Y"))
 
 ```{r, fig.asp=1, fig.width=12}
 par(mfrow = c(2, 2))
-plot(pred_glm, main = glue("{soil_var} - glm"))
-plot(pred_rf, main = glue("{soil_var} - rf"))
-plot(pred_idw, main = glue("{soil_var} - iwd"))
+at <- soil_data %>% dplyr::filter(camada_id == 1) %>% .[[soil_var]] %>% range()
+at <- seq(at[1], at[2], length.out = 9) %>% round(2)
+col <- RColorBrewer::brewer.pal(n = length(at), name = "Oranges")
+plot(pred_idw, main = glue("{soil_var} - iwd"), breaks = at, col = col)
+plot(pred_glm, main = glue("{soil_var} - glm"), breaks = at, col = col)
+plot(pred_rf, main = glue("{soil_var} - rf"), breaks = at, col = col)
 ```
 
 ```{r}
-mapview(pred_glm, alpha.regions = 1) +
-mapview(pred_rf, alpha.regions = 1) +
-mapview(pred_idw, alpha.regions = 1) +
+mapview(pred_idw, alpha.regions = 1, at = at, col = col) +
+mapview(pred_glm, alpha.regions = 1, at = at, col = col) +
+mapview(pred_rf, alpha.regions = 1, at = at, col = col) +
   soil_data %>% dplyr::filter(camada_id == 1) %>% dplyr::select(soil_var) %>% mapview() +
   mapview(contour_lines)
 ```
