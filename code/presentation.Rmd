@@ -1,0 +1,33 @@
+1. Gênese e distribuição espacial do solo
+   1.1 Fatores de formação do solo: o modelo clorpt
+       - Derivation of state factor equations of soils and ecosystems (Jenny1961)
+   1.2 Processos gerais de formação do solo: adições, perdas, translocações e transformações
+       - Outline of a generalized theory of soil genesis (Simonson1959)
+   1.3 Autocorrelação espacial: semivariograma
+       - How geostatistics can help you (OliverEtAl1991)
+2. Covariáveis ambientais
+   2.1 Indicadores dos fatores de formação do solo
+       - Do more detailed environmental covariates deliver more accurate soil maps? (Samuel-RosaEtAl2015)
+   2.2 Clima e material de origem: mapas meteorológico e geológico
+   2.3 Relevo: modelo digital de elevação e atributos derivados
+   2.4 Organismos:
+       a. Vegetação: imagens de orbitais e suborbitais
+       b. Ação antrópica: mapas de manejo do solo
+   2.5 Solo: sensores proximais mapas de propriedades do solo
+3. Aprendizado de máquina
+   3.1 Correlação ambiental
+       - Soil attribute prediction using terrain analysis (MooreEtAl1993)
+   3.2 Métodos de aprendizado de máquina:
+       a. Regressão linear múltipla
+       b. Árvore de regressão
+          - Induction of decision trees (Quinlan1986)
+       c. Floresta aleatória
+          - Random forests (Breiman2001)
+4. Modelo linear misto de variação espacial
+   4.1 Efeitos fixos e aleatórios: o modelo scorpan
+       - On digital soil mapping (McBratneyEtAl2003)
+   4.2 Calibração, predição e validação
+       - On spatial prediction of soil properties in the presence of a spatial trend: the empirical best linear
+         unbiased predictor (E-BLUP) with REML (LarkEtAl2006)
+       - Sampling for validation of digital soil maps (BrusEtAl2011)
+5. Atividades práticas
