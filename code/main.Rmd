@@ -414,7 +414,7 @@ soil_data %<>%
 ### Análise exploratória espacial
 
 ```{r}
-soil_var <- "bases_saturacao_calc"
+soil_var <- "potassio_resina"
 ```
 
 Vamos fazer uma rápida análise exploratória espacial dos dados de uma das propriedades do solo a serem mapeadas,
@@ -515,7 +515,7 @@ ranger::importance(fit_rf$finalModel) %>%
 
 ### Interpolação ponderada pelo inverso da distância
 
-```{r}
+```{r, eval=FALSE}
 library(parallel)
 optim_iwd <- 
   mclapply(c(0.5, 1, 2, 4), function (idp) {
@@ -538,20 +538,6 @@ optim_iwd <-
 ```
 
 ```{r}
-# fit_idw <- 
-#   soil_data %>% 
-#   cbind(., st_coordinates(.)) %>% 
-#   as.data.frame() %>% 
-#   dplyr::filter(camada_id == 1) %>% 
-#   gstat(id = "soil", formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5)) %T>% 
-#   print()
-# cv_idw <-
-#   soil_data %>% 
-#   cbind(., st_coordinates(.)) %>% 
-#   as.data.frame() %>% 
-#   dplyr::filter(camada_id == 1) %>% 
-#   gstat.cv(fit_idw, formula = f_idw, locations = ~ X + Y, data = ., nmax = 7, set = list(idp = .5), 
-#            verbose = FALSE, debug.level = 0)
 fit_idw1 <- 
   soil_data %>% 
   cbind(., st_coordinates(.)) %>% 
@@ -592,14 +578,12 @@ discrepantes que inflam o AVE. Ambas as medidas representam o quão eficiente o 
 dos dados em comparação ao uso da média dos dados.
 
 ```{r}
-soil_data %>% 
-  mutate(idw = c(cv_idw1$soil.pred, cv_idw2$soil.pred) - c(cv_idw1$observed, cv_idw2$observed),
-         glm = fit_glm$pred$pred - .[[soil_var]],
-         rf  = fit_rf$pred$pred - .[[soil_var]]) %>% 
-  as.data.frame() %>% 
-  dplyr::select(idw, glm, rf) %>% 
+data.frame(
+  idw = c(cv_idw1$soil.pred, cv_idw2$soil.pred) - c(cv_idw1$observed, cv_idw2$observed),
+  glm = fit_glm$pred$pred - fit_glm$pred$obs,
+  rf  = fit_rf$pred$pred - fit_rf$pred$obs) %>% 
   stack() %>% 
-  mutate(residual = rep(mean(soil_data[[soil_var]]) - soil_data[[soil_var]], 3)) %>% 
+  mutate(residual = rep(mean(soil_data[[soil_var]]) - soil_data[[soil_var]], nlevels(.[["ind"]]))) %>% 
   dplyr::group_by(ind) %>%
   dplyr::summarise(
     ME = mean(values),
