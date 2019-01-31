@@ -23,12 +23,13 @@ Os objetivos da oficina são os seguintes:
 ## Conteúdo
 
 1. Gênese e distribuição espacial do solo
-    a. Fatores de formação do solo: o modelo clorpt
+    + Fatores de formação do solo: o modelo clorpt
         - Derivation of state factor equations of soils and ecosystems (Jenny, 1961)
-    b. Processos gerais de formação do solo: adições, perdas, translocações e transformações
+    + Processos gerais de formação do solo: adições, perdas, translocações e transformações
         - Outline of a generalized theory of soil genesis (Simonson, 1959)
-    c. Autocorrelação espacial: semivariograma
+    + Autocorrelação espacial: semivariograma
         - How geostatistics can help you (Oliver e Webster, 1991)
+        
 2. Covariáveis ambientais
    a. Indicadores dos fatores de formação do solo
        - Do more detailed environmental covariates deliver more accurate soil maps? (Samuel-Rosa et al., 2015)
