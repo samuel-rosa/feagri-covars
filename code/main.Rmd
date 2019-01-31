@@ -362,8 +362,8 @@ propriedades do solo.
 Os dados do solo utilizados neste estudo já foram coletados. Portanto, deixaremos de lado o processo de
 otimização e passaremos imediatamente ao processo de calibração dos modelos, validação e predição espacial.
 
-Os dados do solo estão numa planilha no Google Drive (https://goo.gl/qcM2uq), organizados conforme os padrões 
-do Repositório Brasileiro Livre para Dados Abertos do Solo (http://coral.ufsm.br/febr/). Para descarregá-los,
+Os dados do solo estão numa planilha no Google Drive, organizados conforme os padrões do Repositório 
+Brasileiro Livre para Dados Abertos do Solo (http://coral.ufsm.br/febr/). Para descarregá-los,
 usaremos as funções `googlesheets::gs_key` e `googlesheets::gs_read_csv`. Note que é preciso usar a função
 `readr::locale` para especificar que utilizamos a vírgula como separador decimal. 
 
@@ -373,11 +373,11 @@ transformamos para a classe `sf` usando `sf::st_as_sf`.
 ```{r, message=FALSE}
 locale <- locale(decimal_mark = ",")
 camada <- 
-  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  "OS DADOS AINDA NÃO SÃO PÚBLICOS. ENTRE EM CONTATO PARA OBTER A CHAVE DE ACESSO!" %>% 
   gs_key() %>% 
   gs_read_csv(ws = "camada", locale = locale, comment = "#metadado>", verbose = FALSE)
 observacao <-
-  "1VqP_W9rS4DJN3EwrGnkT_gFduMTwaupFgct-9OqK9WI" %>% 
+  "OS DADOS AINDA NÃO SÃO PÚBLICOS. ENTRE EM CONTATO PARA OBTER A CHAVE DE ACESSO!" %>% 
   gs_key() %>% 
   gs_read_csv(ws = "observacao", locale = locale, comment = "#metadado>", verbose = FALSE)
 soil_data <- 
