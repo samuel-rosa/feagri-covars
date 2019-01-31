@@ -29,6 +29,7 @@ Os objetivos da oficina são os seguintes:
         - Outline of a generalized theory of soil genesis (Simonson, 1959)
     + Autocorrelação espacial: semivariograma
         - How geostatistics can help you (Oliver e Webster, 1991)
+        
 2. Covariáveis ambientais
     + Indicadores dos fatores de formação do solo
         - Do more detailed environmental covariates deliver more accurate soil maps? (Samuel-Rosa et al., 2015)
