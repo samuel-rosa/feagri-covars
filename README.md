@@ -1,9 +1,9 @@
 # Oficina de mapeamento digital do solo para agricultura de precisão
 
 Local: Laboratório de Geoprocessamento da Faculdade de Engenharia Agrícola (FEAGRI) da Universidade Estadual de
-Campinas (UNICAMP)
-Data: 24 e 25 de janeiro de 2019
-Carga horária: 12 horas
+Campinas (UNICAMP)<br>
+Data: 24 e 25 de janeiro de 2019<br>
+Carga horária: 12 horas<br>
 Público: mestrandos, doutorandos, pós-doutorandos e professores
 
 ## Objetivos
